@@ -1,4 +1,4 @@
-i# glm-coding-plan-statusline
+# glm-coding-plan-statusline
 
 > Claude Code용 GLM Coding Plan 사용량 모니터링 플러그인
 
