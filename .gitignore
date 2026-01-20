@@ -1,0 +1,8 @@
+.claude
+.serena
+!.claude-plugin
+
+# Build
+node_modules/
+dist/
+*.log

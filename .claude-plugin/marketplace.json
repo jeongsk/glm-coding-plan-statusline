@@ -1,0 +1,13 @@
+{
+  "name": "glm-coding-plan-statusline",
+  "owner": {
+    "name": "jeongsk"
+  },
+  "plugins": [
+    {
+      "name": "glm-coding-plan-statusline",
+      "source": "./",
+      "description": "Configure a custom status line for Claude Code to display contextual information like model name, directory, and git branch at the bottom of the interface."
+    }
+  ]
+}

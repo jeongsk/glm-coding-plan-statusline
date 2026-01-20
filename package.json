@@ -1,0 +1,28 @@
+{
+  "name": "glm-coding-plan-statusline",
+  "version": "1.0.0",
+  "description": "Configure GLM Coding Plan status line for Claude Code",
+  "type": "module",
+  "author": "jeongsk",
+  "license": "MIT",
+  "bin": {
+    "glm-coding-plan-statusline": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "esbuild src/statusline.mjs --bundle --platform=node --format=esm --outfile=dist/index.js --banner:js=\"#!/usr/bin/env node\"",
+    "dev": "node --watch src/statusline.mjs",
+    "prepublishOnly": "npm run build",
+    "test": "echo '{\"model\":{\"display_name\":\"Opus\"}}' | node dist/index.js"
+  },
+  "devDependencies": {
+    "esbuild": "^0.27.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "dist",
+    "commands",
+    ".claude-plugin"
+  ]
+}
