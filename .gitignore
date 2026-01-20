@@ -4,5 +4,5 @@
 
 # Build
 node_modules/
-dist/
+!dist/index.js
 *.log

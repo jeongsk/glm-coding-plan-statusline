@@ -35,6 +35,10 @@ const colors = {
 const baseUrl = process.env.ANTHROPIC_BASE_URL || '';
 const authToken = process.env.ANTHROPIC_AUTH_TOKEN || '';
 
+const ANTHROPIC_DEFAULT_OPUS_MODEL="GLM-4.7"
+const ANTHROPIC_DEFAULT_SONNET_MODEL="GLM-4.7"
+const ANTHROPIC_DEFAULT_HAIKU_MODEL="GLM-4.5-Air"
+
 // Determine platform and endpoints
 let platform = null;
 let modelUsageUrl = null;
@@ -217,9 +221,9 @@ const fetchUsageData = async () => {
         // Get model name
         if (data.list[0].model) {
           modelName = data.list[0].model;
-          if (modelName.includes('opus')) modelName = 'GLM-4.7';
-          else if (modelName.includes('sonnet')) modelName = 'GLM-4.7';
-          else if (modelName.includes('haiku')) modelName = 'GLM-4.5-air';
+          if (modelName.includes('Opus')) modelName = ANTHROPIC_DEFAULT_OPUS_MODEL;
+          else if (modelName.includes('Sonnet')) modelName = ANTHROPIC_DEFAULT_SONNET_MODEL;
+          else if (modelName.includes('Haiku')) modelName = ANTHROPIC_DEFAULT_HAIKU_MODEL;
         }
       }
     }
@@ -255,15 +259,15 @@ const formatOutput = (data, sessionContext) => {
   let modelName = data.modelName;
   if (sessionContext?.model?.display_name) {
     const displayName = sessionContext.model.display_name;
-    if (displayName.includes('Opus')) modelName = 'Opus';
-    else if (displayName.includes('Sonnet')) modelName = 'Sonnet';
-    else if (displayName.includes('Haiku')) modelName = 'Haiku';
+    if (displayName.includes('Opus')) modelName = ANTHROPIC_DEFAULT_OPUS_MODEL;
+    else if (displayName.includes('Sonnet')) modelName = ANTHROPIC_DEFAULT_SONNET_MODEL;
+    else if (displayName.includes('Haiku')) modelName = ANTHROPIC_DEFAULT_HAIKU_MODEL;
   }
 
-  // Format: [Model] Token% | MCP% | Cost
-  const tokenStr = `${colors.orange}Token:${data.tokenPercent}%${colors.reset}`;
-  const mcpStr = `${colors.blue}MCP:${data.mcpPercent}%${colors.reset}`;
-  const costStr = `${colors.green}Cost:$${data.totalCost}${colors.reset}`;
+  // Format: [Model] Token usage(5H) | Tool(1M) | Cost
+  const tokenStr = `${colors.orange}Token(5H): ${data.tokenPercent}%${colors.reset}`;
+  const mcpStr = `${colors.blue}Tool(1M): ${data.mcpPercent}%${colors.reset}`;
+  const costStr = `${colors.green}$${data.totalCost}${colors.reset}`;
 
   return `[${modelName}] ${tokenStr} | ${mcpStr} | ${costStr}`;
 };
