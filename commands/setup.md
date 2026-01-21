@@ -24,9 +24,7 @@ Add to `~/.claude/settings.json`:
 {
   "statusLine": {
     "type": "command",
-    "command": "node ${CLAUDE_PLUGIN_ROOT}/dist/index.js"
+    "command": "node ~/.claude/plugins/marketplaces/glm-coding-plan-statusline/dist/index.js"
   }
 }
 ```
-
-**Important**: Use `${CLAUDE_PLUGIN_ROOT}` for the plugin path.
