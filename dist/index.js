@@ -299,7 +299,7 @@ function renderProgressBar(percent, width = 10) {
   } else {
     color = colors.green;
   }
-  return `${color}${filled}${colors.gray}${empty}${colors.reset}`;
+  return `${color}${filled}${colors.gray}${empty} ${percent}%${colors.reset}`;
 }
 function formatOutput(data, sessionContext) {
   if (!data || data.error === "setup_required") {
@@ -312,12 +312,13 @@ function formatOutput(data, sessionContext) {
   if (sessionContext?.model?.display_name) {
     modelName = mapModelName(sessionContext.model.display_name);
   }
-  const tokenPercent = data.tokenPercent ?? 0;
-  const progressBar = renderProgressBar(tokenPercent);
-  const tokenStr = `${progressBar} ${tokenPercent}%${colors.gray}(5h)${colors.reset}`;
-  const mcpStr = `${colors.gray}Tool(1M):${data.mcpPercent ?? 0}%${colors.reset}`;
-  const costStr = `${colors.green}$${data.totalCost ?? "0.00"}${colors.reset}`;
-  return `[${modelName}] ${tokenStr} | ${mcpStr} | ${costStr}`;
+  const healthPercent = data.tokenPercent ?? 0;
+  const healthBar = renderProgressBar(healthPercent);
+  const healthStr = `${healthBar}`;
+  const tokenStr = `5h: ${healthPercent}%`;
+  const mcpStr = `Tool: ${data.mcpPercent ?? 0}%`;
+  const costStr = `$${data.totalCost ?? "0.00"}`;
+  return `[${modelName}] ${healthStr}${colors.gray} | ${tokenStr} | ${mcpStr} | ${costStr}${colors.reset}`;
 }
 async function main() {
   let sessionContext = {};
