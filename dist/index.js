@@ -19,6 +19,14 @@ function mapModelName(modelName) {
   return modelName;
 }
 
+// src/utils/sessionHelpers.ts
+function getCurrentDirName(context) {
+  const currentDir = context.workspace?.current_dir;
+  if (!currentDir) return void 0;
+  const parts = currentDir.split(/\/|\\/);
+  return parts[parts.length - 1] || currentDir;
+}
+
 // src/statusline.ts
 function getClaudeEnv(projectDir = process.cwd()) {
   const homeDir = process.env.HOME || process.env.USERPROFILE;
@@ -338,12 +346,6 @@ function calculateContextUsage(sessionContext) {
     contextWindow.total_input_tokens * 100 / contextWindow.context_window_size
   );
 }
-function formatDirectoryName(dirPath) {
-  if (!dirPath) return "";
-  const dirName = dirPath.split(path.sep).pop() || dirPath;
-  const maxLength = 15;
-  return dirName.length > maxLength ? dirName.slice(0, maxLength - 2) + "..." : dirName;
-}
 function readGitBranch() {
   try {
     const headPath = path.join(process.cwd(), ".git", "HEAD");
@@ -372,20 +374,10 @@ function formatOutput(data, sessionContext) {
   const mcpStr = `Tool: ${data.mcpPercent ?? 0}%`;
   const costStr = `$${data.totalCost ?? "0.00"}`;
   const resetStr = data.nextResetTimeStr ? `${colors.gray} | Reset: ${data.nextResetTimeStr}${colors.reset}` : "";
-  let dirBranchStr = "";
-  const currentDirName = sessionContext?.workspace?.current_dir ? formatDirectoryName(sessionContext.workspace.current_dir) : "";
-  const gitBranch = readGitBranch();
-  if (currentDirName || gitBranch) {
-    const parts = [];
-    if (currentDirName) {
-      parts.push(`${colors.gray}\u{1F4C1}${currentDirName}${colors.reset}`);
-    }
-    if (gitBranch) {
-      parts.push(`${colors.gray}\u{1F33F} ${gitBranch}${colors.reset}`);
-    }
-    dirBranchStr = `${colors.gray} | ${parts.join(" ")}${colors.reset}`;
-  }
-  return `[${modelName}] ${contextBar}${colors.gray} | ${tokenStr} | ${mcpStr} | ${costStr}${resetStr}${dirBranchStr}${colors.reset}`;
+  const currentDirStr = `\u{1F4C1} ${getCurrentDirName(sessionContext)}`;
+  const gitBranch = `\u{1F33F} git:(${readGitBranch()})`;
+  return `${colors.gray}\u{1F916} ${modelName} | ${contextBar}${colors.gray} | ${tokenStr} | ${mcpStr} | ${costStr}${resetStr}
+${currentDirStr} | ${gitBranch}${colors.reset}`;
 }
 async function main() {
   let sessionContext = {};

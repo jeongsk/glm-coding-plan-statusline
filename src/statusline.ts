@@ -21,6 +21,7 @@ import type {
   ModelUsageResult,
   SessionContext,
 } from "./types.js";
+import { getCurrentDirName } from "./utils/sessionHelpers.js";
 
 /**
  * Reads Claude environment variables from settings files
@@ -571,24 +572,10 @@ function formatOutput(data: UsageData, sessionContext: SessionContext): string {
     : "";
 
   // Add directory and git branch if available
-  let dirBranchStr = "";
-  const currentDirName = sessionContext?.workspace?.current_dir
-    ? formatDirectoryName(sessionContext.workspace.current_dir)
-    : "";
-  const gitBranch = readGitBranch();
+  const currentDirStr = `📁 ${getCurrentDirName(sessionContext)}`
+  const gitBranch = `🌿 git:(${readGitBranch()})`;
 
-  if (currentDirName || gitBranch) {
-    const parts: string[] = [];
-    if (currentDirName) {
-      parts.push(`${colors.gray}📁${currentDirName}${colors.reset}`);
-    }
-    if (gitBranch) {
-      parts.push(`${colors.gray}🌿 ${gitBranch}${colors.reset}`);
-    }
-    dirBranchStr = `${colors.gray} | ${parts.join(" ")}${colors.reset}`;
-  }
-
-  return `[${modelName}] ${contextBar}${colors.gray} | ${tokenStr} | ${mcpStr} | ${costStr}${resetStr}${dirBranchStr}${colors.reset}`;
+  return `${colors.gray}🤖 ${modelName} | ${contextBar}${colors.gray} | ${tokenStr} | ${mcpStr} | ${costStr}${resetStr}\n${currentDirStr} | ${gitBranch}${colors.reset}`;
 }
 
 // Main execution
