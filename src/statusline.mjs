@@ -12,6 +12,7 @@ import https from 'https';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { mapModelName } from './utils/modelMapper.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -85,10 +86,6 @@ const colors = {
 const claudeEnv = getClaudeEnv();
 const baseUrl = process.env.ANTHROPIC_BASE_URL || claudeEnv?.ANTHROPIC_BASE_URL || '';
 const authToken = process.env.ANTHROPIC_AUTH_TOKEN || claudeEnv?.ANTHROPIC_AUTH_TOKEN || '';
-
-const ANTHROPIC_DEFAULT_OPUS_MODEL = "GLM-4.7";
-const ANTHROPIC_DEFAULT_SONNET_MODEL = "GLM-4.7";
-const ANTHROPIC_DEFAULT_HAIKU_MODEL = "GLM-4.5-Air";
 
 // Determine platform and endpoints
 let platform = null;
@@ -196,12 +193,105 @@ const httpsGet = (url, queryParams = '') => {
   });
 };
 
-// Fetch usage data
-const fetchUsageData = async () => {
-  // Check cache first
+/**
+ * Checks if cached data should be used
+ * @returns {Object|null} Cached data if valid, null otherwise
+ */
+const shouldUseCache = () => {
   const cache = loadCache();
   if (isCacheValid(cache)) {
     return cache.data;
+  }
+  return null;
+};
+
+/**
+ * Fetches quota limit data
+ * @returns {Promise<Object>} Quota limit data with token and time percentages
+ */
+const fetchQuota = async () => {
+  try {
+    const result = await httpsGet(quotaLimitUrl, '');
+    if (result?.data?.limits) {
+      const limits = result.data.limits;
+      let tokenPercent = 0;
+      let mcpPercent = 0;
+      for (const limit of limits) {
+        if (limit.type === 'TOKENS_LIMIT') {
+          tokenPercent = Math.round(limit.percentage || 0);
+        }
+        if (limit.type === 'TIME_LIMIT') {
+          mcpPercent = Math.round(limit.percentage || 0);
+        }
+      }
+      return { tokenPercent, mcpPercent };
+    }
+  } catch (e) {
+    // Ignore quota errors
+  }
+  return { tokenPercent: 0, mcpPercent: 0 };
+};
+
+/**
+ * Fetches model usage data and calculates cost
+ * @param {string} queryParams - Query parameters for the API request
+ * @returns {Promise<Object>} Model usage data with cost and model name
+ */
+const fetchModelUsage = async (queryParams) => {
+  try {
+    const result = await httpsGet(modelUsageUrl, queryParams);
+    if (result?.data?.list && result.data.list.length > 0) {
+      const list = result.data.list;
+
+      // Calculate cost
+      const totalInputTokens = list.reduce((sum, item) => sum + (item.inputTokens || 0), 0);
+      const totalOutputTokens = list.reduce((sum, item) => sum + (item.outputTokens || 0), 0);
+      // Opus pricing: $3/M input, $15/M output (approximate)
+      const totalCost = (totalInputTokens / 1000000) * 3 + (totalOutputTokens / 1000000) * 15;
+
+      // Get model name
+      const rawModelName = list[0].model || 'Unknown';
+      const modelName = mapModelName(rawModelName);
+
+      return {
+        totalCost: totalCost.toFixed(2),
+        modelName,
+        hasData: true
+      };
+    }
+  } catch (e) {
+    // Ignore model usage errors
+  }
+  return { totalCost: '0.00', modelName: 'Unknown', hasData: false };
+};
+
+/**
+ * Fetches tool usage data
+ * @param {string} queryParams - Query parameters for the API request
+ * @returns {Promise<number>} MCP usage percentage estimate
+ */
+const fetchToolUsage = async (queryParams) => {
+  try {
+    const result = await httpsGet(toolUsageUrl, queryParams);
+    if (result?.data?.list && result.data.list.length > 0) {
+      return Math.min(100, Math.round(result.data.list.length * 5)); // Rough estimate
+    }
+  } catch (e) {
+    // Ignore tool usage errors
+  }
+  return 0;
+};
+
+/**
+ * Fetches usage data with caching
+ * Orchestrates quota, model usage, and tool usage API calls
+ * @returns {Promise<Object>} Usage data with token, mcp, cost, and model info
+ */
+const fetchUsageData = async () => {
+  // Check cache first
+  const cachedData = shouldUseCache();
+  if (cachedData) {
+    return cachedData;
   }
 
   // Check environment
@@ -218,71 +308,38 @@ const fetchUsageData = async () => {
   const queryParams = `?startTime=${encodeURIComponent(startTime)}&endTime=${encodeURIComponent(endTime)}`;
 
   try {
-    // Parallel requests
-    const [modelUsage, toolUsage, quotaLimit] = await Promise.allSettled([
-      httpsGet(modelUsageUrl, queryParams),
-      httpsGet(toolUsageUrl, queryParams),
-      httpsGet(quotaLimitUrl, '')
+    // Parallel requests using helper functions
+    const [quotaData, modelUsageData, mcpPercent] = await Promise.allSettled([
+      fetchQuota(),
+      fetchModelUsage(queryParams),
+      fetchToolUsage(queryParams)
     ]);
 
-    // Extract data
+    // Extract quota data
     let tokenPercent = 0;
-    let mcpPercent = 0;
-    let totalCost = 0;
+    let finalMcpPercent = 0;
+    if (quotaData.status === 'fulfilled') {
+      tokenPercent = quotaData.value.tokenPercent;
+      finalMcpPercent = quotaData.value.mcpPercent;
+    }
+
+    // If tool usage returned a value, use it
+    if (mcpPercent.status === 'fulfilled' && mcpPercent.value > 0) {
+      finalMcpPercent = mcpPercent.value;
+    }
+
+    // Extract model usage data
+    let totalCost = '0.00';
     let modelName = 'Unknown';
-
-    if (modelUsage.status === 'fulfilled' && modelUsage.value.data) {
-      const data = modelUsage.value.data;
-      if (data.list && data.list.length > 0) {
-        const totalTokens = data.list.reduce((sum, item) => sum + (item.totalTokens || 0), 0);
-        // Approximate percentage (will be overridden by quota limit if available)
-        tokenPercent = Math.min(100, Math.round(totalTokens / 100000));
-      }
-    }
-
-    if (toolUsage.status === 'fulfilled' && toolUsage.value.data) {
-      const data = toolUsage.value.data;
-      if (data.list && data.list.length > 0) {
-        mcpPercent = Math.min(100, Math.round(data.list.length * 5)); // Rough estimate
-      }
-    }
-
-    if (quotaLimit.status === 'fulfilled' && quotaLimit.value.data) {
-      const limits = quotaLimit.value.data.limits || [];
-      for (const limit of limits) {
-        if (limit.type === 'TOKENS_LIMIT') {
-          tokenPercent = Math.round(limit.percentage || 0);
-        }
-        if (limit.type === 'TIME_LIMIT') {
-          mcpPercent = Math.round(limit.percentage || 0);
-        }
-      }
-    }
-
-    // Calculate cost from model usage
-    if (modelUsage.status === 'fulfilled' && modelUsage.value.data) {
-      const data = modelUsage.value.data;
-      if (data.list && data.list.length > 0) {
-        // Simple cost calculation (rough estimate)
-        const totalInputTokens = data.list.reduce((sum, item) => sum + (item.inputTokens || 0), 0);
-        const totalOutputTokens = data.list.reduce((sum, item) => sum + (item.outputTokens || 0), 0);
-        // Opus pricing: $3/M input, $15/M output (approximate)
-        totalCost = ((totalInputTokens / 1000000) * 3 + (totalOutputTokens / 1000000) * 15);
-
-        // Get model name
-        if (data.list[0].model) {
-          modelName = data.list[0].model;
-          if (modelName.includes('Opus')) modelName = ANTHROPIC_DEFAULT_OPUS_MODEL;
-          else if (modelName.includes('Sonnet')) modelName = ANTHROPIC_DEFAULT_SONNET_MODEL;
-          else if (modelName.includes('Haiku')) modelName = ANTHROPIC_DEFAULT_HAIKU_MODEL;
-        }
-      }
+    if (modelUsageData.status === 'fulfilled') {
+      totalCost = modelUsageData.value.totalCost;
+      modelName = modelUsageData.value.modelName;
     }
 
     const result = {
       tokenPercent,
-      mcpPercent,
-      totalCost: totalCost.toFixed(2),
+      mcpPercent: finalMcpPercent,
+      totalCost,
       modelName,
       timestamp: Date.now()
     };
@@ -309,10 +366,7 @@ const formatOutput = (data, sessionContext) => {
   // Get model name from session context if available
   let modelName = data.modelName;
   if (sessionContext?.model?.display_name) {
-    const displayName = sessionContext.model.display_name;
-    if (displayName.includes('Opus')) modelName = ANTHROPIC_DEFAULT_OPUS_MODEL;
-    else if (displayName.includes('Sonnet')) modelName = ANTHROPIC_DEFAULT_SONNET_MODEL;
-    else if (displayName.includes('Haiku')) modelName = ANTHROPIC_DEFAULT_HAIKU_MODEL;
+    modelName = mapModelName(sessionContext.model.display_name);
   }
 
   // Format: [Model] Token usage(5H) | Tool(1M) | Cost

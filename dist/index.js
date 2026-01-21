@@ -5,6 +5,22 @@ import https from "https";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+
+// src/utils/modelMapper.js
+var ANTHROPIC_DEFAULT_OPUS_MODEL = "GLM-4.7";
+var ANTHROPIC_DEFAULT_SONNET_MODEL = "GLM-4.7";
+var ANTHROPIC_DEFAULT_HAIKU_MODEL = "GLM-4.5-Air";
+function mapModelName(modelName) {
+  if (!modelName) {
+    return modelName;
+  }
+  if (modelName.includes("Opus")) return ANTHROPIC_DEFAULT_OPUS_MODEL;
+  if (modelName.includes("Sonnet")) return ANTHROPIC_DEFAULT_SONNET_MODEL;
+  if (modelName.includes("Haiku")) return ANTHROPIC_DEFAULT_HAIKU_MODEL;
+  return modelName;
+}
+
+// src/statusline.mjs
 var __dirname = path.dirname(fileURLToPath(import.meta.url));
 var getClaudeEnv = (projectDir = process.cwd()) => {
   const homeDir = process.env.HOME || process.env.USERPROFILE;
@@ -61,9 +77,6 @@ var colors = {
 var claudeEnv = getClaudeEnv();
 var baseUrl = process.env.ANTHROPIC_BASE_URL || claudeEnv?.ANTHROPIC_BASE_URL || "";
 var authToken = process.env.ANTHROPIC_AUTH_TOKEN || claudeEnv?.ANTHROPIC_AUTH_TOKEN || "";
-var ANTHROPIC_DEFAULT_OPUS_MODEL = "GLM-4.7";
-var ANTHROPIC_DEFAULT_SONNET_MODEL = "GLM-4.7";
-var ANTHROPIC_DEFAULT_HAIKU_MODEL = "GLM-4.5-Air";
 var platform = null;
 var modelUsageUrl = null;
 var toolUsageUrl = null;
@@ -154,10 +167,68 @@ var httpsGet = (url, queryParams = "") => {
     req.end();
   });
 };
-var fetchUsageData = async () => {
+var shouldUseCache = () => {
   const cache = loadCache();
   if (isCacheValid(cache)) {
     return cache.data;
+  }
+  return null;
+};
+var fetchQuota = async () => {
+  try {
+    const result = await httpsGet(quotaLimitUrl, "");
+    if (result?.data?.limits) {
+      const limits = result.data.limits;
+      let tokenPercent = 0;
+      let mcpPercent = 0;
+      for (const limit of limits) {
+        if (limit.type === "TOKENS_LIMIT") {
+          tokenPercent = Math.round(limit.percentage || 0);
+        }
+        if (limit.type === "TIME_LIMIT") {
+          mcpPercent = Math.round(limit.percentage || 0);
+        }
+      }
+      return { tokenPercent, mcpPercent };
+    }
+  } catch (e) {
+  }
+  return { tokenPercent: 0, mcpPercent: 0 };
+};
+var fetchModelUsage = async (queryParams) => {
+  try {
+    const result = await httpsGet(modelUsageUrl, queryParams);
+    if (result?.data?.list && result.data.list.length > 0) {
+      const list = result.data.list;
+      const totalInputTokens = list.reduce((sum, item) => sum + (item.inputTokens || 0), 0);
+      const totalOutputTokens = list.reduce((sum, item) => sum + (item.outputTokens || 0), 0);
+      const totalCost = totalInputTokens / 1e6 * 3 + totalOutputTokens / 1e6 * 15;
+      const rawModelName = list[0].model || "Unknown";
+      const modelName = mapModelName(rawModelName);
+      return {
+        totalCost: totalCost.toFixed(2),
+        modelName,
+        hasData: true
+      };
+    }
+  } catch (e) {
+  }
+  return { totalCost: "0.00", modelName: "Unknown", hasData: false };
+};
+var fetchToolUsage = async (queryParams) => {
+  try {
+    const result = await httpsGet(toolUsageUrl, queryParams);
+    if (result?.data?.list && result.data.list.length > 0) {
+      return Math.min(100, Math.round(result.data.list.length * 5));
+    }
+  } catch (e) {
+  }
+  return 0;
+};
+var fetchUsageData = async () => {
+  const cachedData = shouldUseCache();
+  if (cachedData) {
+    return cachedData;
   }
   if (!authToken || !baseUrl || !modelUsageUrl) {
     return { error: "setup_required", modelName: "Opus", tokenPercent: 0, mcpPercent: 0, totalCost: "0.00" };
@@ -168,57 +239,30 @@ var fetchUsageData = async () => {
   const endTime = formatDateTime(now);
   const queryParams = `?startTime=${encodeURIComponent(startTime)}&endTime=${encodeURIComponent(endTime)}`;
   try {
-    const [modelUsage, toolUsage, quotaLimit] = await Promise.allSettled([
-      httpsGet(modelUsageUrl, queryParams),
-      httpsGet(toolUsageUrl, queryParams),
-      httpsGet(quotaLimitUrl, "")
+    const [quotaData, modelUsageData, mcpPercent] = await Promise.allSettled([
+      fetchQuota(),
+      fetchModelUsage(queryParams),
+      fetchToolUsage(queryParams)
     ]);
     let tokenPercent = 0;
-    let mcpPercent = 0;
-    let totalCost = 0;
+    let finalMcpPercent = 0;
+    if (quotaData.status === "fulfilled") {
+      tokenPercent = quotaData.value.tokenPercent;
+      finalMcpPercent = quotaData.value.mcpPercent;
+    }
+    if (mcpPercent.status === "fulfilled" && mcpPercent.value > 0) {
+      finalMcpPercent = mcpPercent.value;
+    }
+    let totalCost = "0.00";
     let modelName = "Unknown";
-    if (modelUsage.status === "fulfilled" && modelUsage.value.data) {
-      const data = modelUsage.value.data;
-      if (data.list && data.list.length > 0) {
-        const totalTokens = data.list.reduce((sum, item) => sum + (item.totalTokens || 0), 0);
-        tokenPercent = Math.min(100, Math.round(totalTokens / 1e5));
-      }
-    }
-    if (toolUsage.status === "fulfilled" && toolUsage.value.data) {
-      const data = toolUsage.value.data;
-      if (data.list && data.list.length > 0) {
-        mcpPercent = Math.min(100, Math.round(data.list.length * 5));
-      }
-    }
-    if (quotaLimit.status === "fulfilled" && quotaLimit.value.data) {
-      const limits = quotaLimit.value.data.limits || [];
-      for (const limit of limits) {
-        if (limit.type === "TOKENS_LIMIT") {
-          tokenPercent = Math.round(limit.percentage || 0);
-        }
-        if (limit.type === "TIME_LIMIT") {
-          mcpPercent = Math.round(limit.percentage || 0);
-        }
-      }
-    }
-    if (modelUsage.status === "fulfilled" && modelUsage.value.data) {
-      const data = modelUsage.value.data;
-      if (data.list && data.list.length > 0) {
-        const totalInputTokens = data.list.reduce((sum, item) => sum + (item.inputTokens || 0), 0);
-        const totalOutputTokens = data.list.reduce((sum, item) => sum + (item.outputTokens || 0), 0);
-        totalCost = totalInputTokens / 1e6 * 3 + totalOutputTokens / 1e6 * 15;
-        if (data.list[0].model) {
-          modelName = data.list[0].model;
-          if (modelName.includes("Opus")) modelName = ANTHROPIC_DEFAULT_OPUS_MODEL;
-          else if (modelName.includes("Sonnet")) modelName = ANTHROPIC_DEFAULT_SONNET_MODEL;
-          else if (modelName.includes("Haiku")) modelName = ANTHROPIC_DEFAULT_HAIKU_MODEL;
-        }
-      }
+    if (modelUsageData.status === "fulfilled") {
+      totalCost = modelUsageData.value.totalCost;
+      modelName = modelUsageData.value.modelName;
     }
     const result = {
       tokenPercent,
-      mcpPercent,
-      totalCost: totalCost.toFixed(2),
+      mcpPercent: finalMcpPercent,
+      totalCost,
       modelName,
       timestamp: Date.now()
     };
@@ -237,10 +281,7 @@ var formatOutput = (data, sessionContext) => {
   }
   let modelName = data.modelName;
   if (sessionContext?.model?.display_name) {
-    const displayName = sessionContext.model.display_name;
-    if (displayName.includes("Opus")) modelName = ANTHROPIC_DEFAULT_OPUS_MODEL;
-    else if (displayName.includes("Sonnet")) modelName = ANTHROPIC_DEFAULT_SONNET_MODEL;
-    else if (displayName.includes("Haiku")) modelName = ANTHROPIC_DEFAULT_HAIKU_MODEL;
+    modelName = mapModelName(sessionContext.model.display_name);
   }
   const tokenStr = `${colors.orange}Token(5H): ${data.tokenPercent}%${colors.reset}`;
   const mcpStr = `${colors.blue}Tool(1M): ${data.mcpPercent}%${colors.reset}`;
