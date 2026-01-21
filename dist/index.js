@@ -286,6 +286,21 @@ async function fetchUsageData() {
     return { error: "loading" };
   }
 }
+function renderProgressBar(percent, width = 10) {
+  const filledWidth = Math.round(percent / 100 * width);
+  const emptyWidth = width - filledWidth;
+  const filled = "\u2588".repeat(filledWidth);
+  const empty = "\u2591".repeat(emptyWidth);
+  let color;
+  if (percent >= 85) {
+    color = colors.red;
+  } else if (percent >= 60) {
+    color = colors.yellow;
+  } else {
+    color = colors.green;
+  }
+  return `${color}${filled}${colors.gray}${empty}${colors.reset}`;
+}
 function formatOutput(data, sessionContext) {
   if (!data || data.error === "setup_required") {
     return `${colors.yellow}\u26A0\uFE0F Setup required${colors.reset}`;
@@ -297,7 +312,9 @@ function formatOutput(data, sessionContext) {
   if (sessionContext?.model?.display_name) {
     modelName = mapModelName(sessionContext.model.display_name);
   }
-  const tokenStr = `${colors.orange}Token(5H):${data.tokenPercent ?? 0}%${colors.reset}`;
+  const tokenPercent = data.tokenPercent ?? 0;
+  const progressBar = renderProgressBar(tokenPercent);
+  const tokenStr = `${progressBar} ${tokenPercent}%${colors.gray}(5h)${colors.reset}`;
   const mcpStr = `${colors.blue}Tool(1M):${data.mcpPercent ?? 0}%${colors.reset}`;
   const costStr = `${colors.green}$${data.totalCost ?? "0.00"}${colors.reset}`;
   return `[${modelName}] ${tokenStr} | ${mcpStr} | ${costStr}`;

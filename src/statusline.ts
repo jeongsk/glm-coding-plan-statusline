@@ -417,6 +417,31 @@ async function fetchUsageData(): Promise<UsageData> {
   }
 }
 
+/**
+ * Renders a progress bar with color based on percentage
+ * @param percent - Percentage value (0-100)
+ * @param width - Width of the progress bar in characters
+ * @returns Colored progress bar string
+ */
+function renderProgressBar(percent: number, width: number = 10): string {
+  const filledWidth = Math.round((percent / 100) * width);
+  const emptyWidth = width - filledWidth;
+  const filled = "█".repeat(filledWidth);
+  const empty = "░".repeat(emptyWidth);
+
+  // Color based on percentage
+  let color: string;
+  if (percent >= 85) {
+    color = colors.red;
+  } else if (percent >= 60) {
+    color = colors.yellow;
+  } else {
+    color = colors.green;
+  }
+
+  return `${color}${filled}${colors.gray}${empty}${colors.reset}`;
+}
+
 // Format output
 function formatOutput(data: UsageData, sessionContext: SessionContext): string {
   if (!data || data.error === "setup_required") {
@@ -433,8 +458,10 @@ function formatOutput(data: UsageData, sessionContext: SessionContext): string {
     modelName = mapModelName(sessionContext.model.display_name);
   }
 
-  // Format: [Model] Token usage(5H) | Tool(1M) | Cost
-  const tokenStr = `${colors.orange}Token(5H):${data.tokenPercent ?? 0}%${colors.reset}`;
+  // Format: [Model] Progress bar(5H) | Tool(1M) | Cost
+  const tokenPercent = data.tokenPercent ?? 0;
+  const progressBar = renderProgressBar(tokenPercent);
+  const tokenStr = `${progressBar} ${tokenPercent}%${colors.gray}(5h)${colors.reset}`;
   const mcpStr = `${colors.blue}Tool(1M):${data.mcpPercent ?? 0}%${colors.reset}`;
   const costStr = `${colors.green}$${data.totalCost ?? "0.00"}${colors.reset}`;
 
