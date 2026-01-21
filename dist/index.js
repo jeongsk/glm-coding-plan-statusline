@@ -338,6 +338,17 @@ function calculateContextUsage(sessionContext) {
     contextWindow.total_input_tokens * 100 / contextWindow.context_window_size
   );
 }
+function formatDirectoryName(dirPath) {
+  if (!dirPath) return "";
+  const dirName = dirPath.split(path.sep).pop() || dirPath;
+  const maxLength = 15;
+  return dirName.length > maxLength ? dirName.slice(0, maxLength - 2) + "..." : dirName;
+}
+function formatGitBranch(branch) {
+  if (!branch) return "";
+  const cleanBranch = branch.replace(/^refs\/heads\//, "").replace(/^heads\//, "");
+  return cleanBranch;
+}
 function formatOutput(data, sessionContext) {
   if (!data || data.error === "setup_required") {
     return `${colors.yellow}\u26A0\uFE0F Setup required${colors.reset}`;
@@ -355,7 +366,20 @@ function formatOutput(data, sessionContext) {
   const mcpStr = `Tool: ${data.mcpPercent ?? 0}%`;
   const costStr = `$${data.totalCost ?? "0.00"}`;
   const resetStr = data.nextResetTimeStr ? `${colors.gray} | Reset: ${data.nextResetTimeStr}${colors.reset}` : "";
-  return `[${modelName}] ${contextBar}${colors.gray} | ${tokenStr} | ${mcpStr} | ${costStr}${resetStr}${colors.reset}`;
+  let dirBranchStr = "";
+  if (sessionContext?.currentDir || sessionContext?.gitBranch) {
+    const parts = [];
+    if (sessionContext.currentDir) {
+      const dirName = formatDirectoryName(sessionContext.currentDir);
+      parts.push(`${colors.blue}${dirName}${colors.reset}`);
+    }
+    if (sessionContext.gitBranch) {
+      const branchName = formatGitBranch(sessionContext.gitBranch);
+      parts.push(`${colors.green}${branchName}${colors.reset}`);
+    }
+    dirBranchStr = `${colors.gray} | ${parts.join(" ")}${colors.reset}`;
+  }
+  return `[${modelName}] ${contextBar}${colors.gray} | ${tokenStr} | ${mcpStr} | ${costStr}${resetStr}${dirBranchStr}${colors.reset}`;
 }
 async function main() {
   let sessionContext = {};

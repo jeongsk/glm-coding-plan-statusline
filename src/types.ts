@@ -130,6 +130,8 @@ export interface SessionModel {
 export interface SessionContext {
   model?: SessionModel;
   context_window?: ContextWindow;
+  currentDir?: string; // Current working directory name
+  gitBranch?: string; // Current git branch name
 }
 
 /**

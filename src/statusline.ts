@@ -499,6 +499,30 @@ function calculateContextUsage(sessionContext: SessionContext): number {
   );
 }
 
+/**
+ * Formats directory name for display (truncates if too long)
+ * @param dirPath - Full directory path or name
+ * @returns Shortened directory name
+ */
+function formatDirectoryName(dirPath: string): string {
+  if (!dirPath) return "";
+  const dirName = dirPath.split(path.sep).pop() || dirPath;
+  const maxLength = 15;
+  return dirName.length > maxLength ? dirName.slice(0, maxLength - 2) + "..." : dirName;
+}
+
+/**
+ * Formats git branch name for display
+ * @param branch - Git branch name
+ * @returns Formatted branch name
+ */
+function formatGitBranch(branch: string): string {
+  if (!branch) return "";
+  // Remove common prefixes like "heads/" or "refs/heads/"
+  const cleanBranch = branch.replace(/^refs\/heads\//, "").replace(/^heads\//, "");
+  return cleanBranch;
+}
+
 // Format output
 function formatOutput(data: UsageData, sessionContext: SessionContext): string {
   if (!data || data.error === "setup_required") {
@@ -519,7 +543,7 @@ function formatOutput(data: UsageData, sessionContext: SessionContext): string {
   const contextPercent = calculateContextUsage(sessionContext);
   const contextBar = renderProgressBar(contextPercent);
 
-  // Format: [Model] Context bar | 5h: XX% | Tool | Cost | Reset
+  // Format: [Model] Context bar | 5h: XX% | Tool | Cost | Reset | Dir | Branch
   const tokenStr = `5h: ${data.tokenPercent ?? 0}%`;
   const mcpStr = `Tool: ${data.mcpPercent ?? 0}%`;
   const costStr = `$${data.totalCost ?? "0.00"}`;
@@ -529,7 +553,22 @@ function formatOutput(data: UsageData, sessionContext: SessionContext): string {
     ? `${colors.gray} | Reset: ${data.nextResetTimeStr}${colors.reset}`
     : "";
 
-  return `[${modelName}] ${contextBar}${colors.gray} | ${tokenStr} | ${mcpStr} | ${costStr}${resetStr}${colors.reset}`;
+  // Add directory and git branch if available
+  let dirBranchStr = "";
+  if (sessionContext?.currentDir || sessionContext?.gitBranch) {
+    const parts: string[] = [];
+    if (sessionContext.currentDir) {
+      const dirName = formatDirectoryName(sessionContext.currentDir);
+      parts.push(`${colors.blue}${dirName}${colors.reset}`);
+    }
+    if (sessionContext.gitBranch) {
+      const branchName = formatGitBranch(sessionContext.gitBranch);
+      parts.push(`${colors.green}${branchName}${colors.reset}`);
+    }
+    dirBranchStr = `${colors.gray} | ${parts.join(" ")}${colors.reset}`;
+  }
+
+  return `[${modelName}] ${contextBar}${colors.gray} | ${tokenStr} | ${mcpStr} | ${costStr}${resetStr}${dirBranchStr}${colors.reset}`;
 }
 
 // Main execution
