@@ -9,13 +9,16 @@
     "glm-coding-plan-statusline": "./dist/index.js"
   },
   "scripts": {
-    "build": "esbuild src/statusline.mjs --bundle --platform=node --format=esm --outfile=dist/index.js --banner:js=\"#!/usr/bin/env node\"",
-    "dev": "node --watch src/statusline.mjs",
-    "prepublishOnly": "npm run build",
+    "build": "esbuild src/statusline.ts --bundle --platform=node --format=esm --outfile=dist/index.js --banner:js=\"#!/usr/bin/env node\"",
+    "dev": "node --watch src/statusline.ts",
+    "type-check": "tsc --noEmit",
+    "prepublishOnly": "npm run build && npm run type-check",
     "test": "echo '{\"model\":{\"display_name\":\"Opus\"}}' | node dist/index.js"
   },
   "devDependencies": {
-    "esbuild": "^0.27.2"
+    "@types/node": "^25.0.9",
+    "esbuild": "^0.27.2",
+    "typescript": "^5.9.3"
   },
   "engines": {
     "node": ">=18.0.0"

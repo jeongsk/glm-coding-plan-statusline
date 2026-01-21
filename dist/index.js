@@ -1,12 +1,11 @@
 #!/usr/bin/env node
 
-// src/statusline.mjs
-import https from "https";
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
+// src/statusline.ts
+import https from "node:https";
+import fs from "node:fs";
+import path from "node:path";
 
-// src/utils/modelMapper.js
+// src/utils/modelMapper.ts
 var ANTHROPIC_DEFAULT_OPUS_MODEL = "GLM-4.7";
 var ANTHROPIC_DEFAULT_SONNET_MODEL = "GLM-4.7";
 var ANTHROPIC_DEFAULT_HAIKU_MODEL = "GLM-4.5-Air";
@@ -20,9 +19,8 @@ function mapModelName(modelName) {
   return modelName;
 }
 
-// src/statusline.mjs
-var __dirname = path.dirname(fileURLToPath(import.meta.url));
-var getClaudeEnv = (projectDir = process.cwd()) => {
+// src/statusline.ts
+function getClaudeEnv(projectDir = process.cwd()) {
   const homeDir = process.env.HOME || process.env.USERPROFILE;
   if (!homeDir) {
     return null;
@@ -47,22 +45,28 @@ var getClaudeEnv = (projectDir = process.cwd()) => {
         if (typeof config.env.ANTHROPIC_AUTH_TOKEN === "string") {
           env.ANTHROPIC_AUTH_TOKEN = config.env.ANTHROPIC_AUTH_TOKEN;
         }
-        if (Object.keys(env).length > 0) {
+        if (env.ANTHROPIC_BASE_URL !== void 0 && env.ANTHROPIC_AUTH_TOKEN !== void 0) {
           return env;
         }
       }
     } catch (err) {
       try {
         if (fs.existsSync(filePath)) {
-          console.error(`Warning: Failed to read ${filePath}: ${err.message}`);
+          console.error(
+            `Warning: Failed to read ${filePath}: ${err.message}`
+          );
         }
       } catch {
       }
     }
   }
   return null;
-};
-var CACHE_FILE = path.join(process.env.HOME || "~", ".claude", "zai-usage-cache.json");
+}
+var CACHE_FILE = path.join(
+  process.env.HOME || "~",
+  ".claude",
+  "zai-usage-cache.json"
+);
 var CACHE_DURATION = 5e3;
 var REQUEST_TIMEOUT = 2e3;
 var colors = {
@@ -77,50 +81,48 @@ var colors = {
 var claudeEnv = getClaudeEnv();
 var baseUrl = process.env.ANTHROPIC_BASE_URL || claudeEnv?.ANTHROPIC_BASE_URL || "";
 var authToken = process.env.ANTHROPIC_AUTH_TOKEN || claudeEnv?.ANTHROPIC_AUTH_TOKEN || "";
-var platform = null;
 var modelUsageUrl = null;
 var toolUsageUrl = null;
 var quotaLimitUrl = null;
 if (baseUrl) {
   if (baseUrl.includes("api.z.ai")) {
-    platform = "ZAI";
     const baseDomain = `${new URL(baseUrl).protocol}//${new URL(baseUrl).host}`;
     modelUsageUrl = `${baseDomain}/api/monitor/usage/model-usage`;
     toolUsageUrl = `${baseDomain}/api/monitor/usage/tool-usage`;
     quotaLimitUrl = `${baseDomain}/api/monitor/usage/quota/limit`;
   } else if (baseUrl.includes("open.bigmodel.cn") || baseUrl.includes("dev.bigmodel.cn")) {
-    platform = "ZHIPU";
     const baseDomain = `${new URL(baseUrl).protocol}//${new URL(baseUrl).host}`;
     modelUsageUrl = `${baseDomain}/api/monitor/usage/model-usage`;
     toolUsageUrl = `${baseDomain}/api/monitor/usage/tool-usage`;
     quotaLimitUrl = `${baseDomain}/api/monitor/usage/quota/limit`;
   }
 }
-var loadCache = () => {
+function loadCache() {
   try {
     if (fs.existsSync(CACHE_FILE)) {
       const data = fs.readFileSync(CACHE_FILE, "utf8");
       return JSON.parse(data);
     }
-  } catch (e) {
+  } catch {
   }
   return null;
-};
-var saveCache = (data) => {
+}
+function saveCache(data) {
   try {
     const dir = path.dirname(CACHE_FILE);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
     fs.writeFileSync(CACHE_FILE, JSON.stringify(data));
-  } catch (e) {
+  } catch {
   }
-};
-var isCacheValid = (cache) => {
-  if (!cache || !cache.timestamp) return false;
+}
+function isCacheValid(cache) {
+  if (!cache) return false;
+  if (!cache.timestamp) return false;
   return Date.now() - cache.timestamp < CACHE_DURATION;
-};
-var formatDateTime = (date) => {
+}
+function formatDateTime(date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
@@ -128,8 +130,8 @@ var formatDateTime = (date) => {
   const minutes = String(date.getMinutes()).padStart(2, "0");
   const seconds = String(date.getSeconds()).padStart(2, "0");
   return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
-};
-var httpsGet = (url, queryParams = "") => {
+}
+function httpsGet(url, queryParams = "") {
   return new Promise((resolve, reject) => {
     const parsedUrl = new URL(url);
     const options = {
@@ -138,7 +140,7 @@ var httpsGet = (url, queryParams = "") => {
       path: parsedUrl.pathname + queryParams,
       method: "GET",
       headers: {
-        "Authorization": authToken,
+        Authorization: authToken,
         "Accept-Language": "en-US,en",
         "Content-Type": "application/json"
       }
@@ -154,7 +156,7 @@ var httpsGet = (url, queryParams = "") => {
         }
         try {
           resolve(JSON.parse(data));
-        } catch (e) {
+        } catch {
           reject(new Error("Invalid JSON response"));
         }
       });
@@ -166,18 +168,18 @@ var httpsGet = (url, queryParams = "") => {
     }, REQUEST_TIMEOUT);
     req.end();
   });
-};
-var shouldUseCache = () => {
+}
+function shouldUseCache() {
   const cache = loadCache();
-  if (isCacheValid(cache)) {
+  if (cache && isCacheValid(cache)) {
     return cache.data;
   }
   return null;
-};
-var fetchQuota = async () => {
+}
+async function fetchQuota() {
   try {
     const result = await httpsGet(quotaLimitUrl, "");
-    if (result?.data?.limits) {
+    if (result && typeof result === "object" && "data" in result && result.data && typeof result.data === "object" && "limits" in result.data && Array.isArray(result.data.limits)) {
       const limits = result.data.limits;
       let tokenPercent = 0;
       let mcpPercent = 0;
@@ -191,17 +193,23 @@ var fetchQuota = async () => {
       }
       return { tokenPercent, mcpPercent };
     }
-  } catch (e) {
+  } catch {
   }
   return { tokenPercent: 0, mcpPercent: 0 };
-};
-var fetchModelUsage = async (queryParams) => {
+}
+async function fetchModelUsage(queryParams) {
   try {
     const result = await httpsGet(modelUsageUrl, queryParams);
-    if (result?.data?.list && result.data.list.length > 0) {
+    if (result && typeof result === "object" && "data" in result && result.data && typeof result.data === "object" && "list" in result.data && Array.isArray(result.data.list) && result.data.list.length > 0) {
       const list = result.data.list;
-      const totalInputTokens = list.reduce((sum, item) => sum + (item.inputTokens || 0), 0);
-      const totalOutputTokens = list.reduce((sum, item) => sum + (item.outputTokens || 0), 0);
+      const totalInputTokens = list.reduce(
+        (sum, item) => sum + (item.inputTokens || 0),
+        0
+      );
+      const totalOutputTokens = list.reduce(
+        (sum, item) => sum + (item.outputTokens || 0),
+        0
+      );
       const totalCost = totalInputTokens / 1e6 * 3 + totalOutputTokens / 1e6 * 15;
       const rawModelName = list[0].model || "Unknown";
       const modelName = mapModelName(rawModelName);
@@ -211,27 +219,33 @@ var fetchModelUsage = async (queryParams) => {
         hasData: true
       };
     }
-  } catch (e) {
+  } catch {
   }
   return { totalCost: "0.00", modelName: "Unknown", hasData: false };
-};
-var fetchToolUsage = async (queryParams) => {
+}
+async function fetchToolUsage(queryParams) {
   try {
     const result = await httpsGet(toolUsageUrl, queryParams);
-    if (result?.data?.list && result.data.list.length > 0) {
+    if (result && typeof result === "object" && "data" in result && result.data && typeof result.data === "object" && "list" in result.data && Array.isArray(result.data.list) && result.data.list.length > 0) {
       return Math.min(100, Math.round(result.data.list.length * 5));
     }
-  } catch (e) {
+  } catch {
   }
   return 0;
-};
-var fetchUsageData = async () => {
+}
+async function fetchUsageData() {
   const cachedData = shouldUseCache();
   if (cachedData) {
     return cachedData;
   }
   if (!authToken || !baseUrl || !modelUsageUrl) {
-    return { error: "setup_required", modelName: "Opus", tokenPercent: 0, mcpPercent: 0, totalCost: "0.00" };
+    return {
+      error: "setup_required",
+      modelName: "Opus",
+      tokenPercent: 0,
+      mcpPercent: 0,
+      totalCost: "0.00"
+    };
   }
   const now = /* @__PURE__ */ new Date();
   const fiveHoursAgo = new Date(now.getTime() - 5 * 60 * 60 * 1e3);
@@ -268,27 +282,27 @@ var fetchUsageData = async () => {
     };
     saveCache(result);
     return result;
-  } catch (error) {
+  } catch {
     return { error: "loading" };
   }
-};
-var formatOutput = (data, sessionContext) => {
+}
+function formatOutput(data, sessionContext) {
   if (!data || data.error === "setup_required") {
     return `${colors.yellow}\u26A0\uFE0F Setup required${colors.reset}`;
   }
   if (data.error === "loading") {
     return `${colors.yellow}\u26A0\uFE0F Loading...${colors.reset}`;
   }
-  let modelName = data.modelName;
+  let modelName = data.modelName ?? "Unknown";
   if (sessionContext?.model?.display_name) {
     modelName = mapModelName(sessionContext.model.display_name);
   }
-  const tokenStr = `${colors.orange}Token(5H): ${data.tokenPercent}%${colors.reset}`;
-  const mcpStr = `${colors.blue}Tool(1M): ${data.mcpPercent}%${colors.reset}`;
-  const costStr = `${colors.green}$${data.totalCost}${colors.reset}`;
+  const tokenStr = `${colors.orange}Token(5H):${data.tokenPercent ?? 0}%${colors.reset}`;
+  const mcpStr = `${colors.blue}Tool(1M):${data.mcpPercent ?? 0}%${colors.reset}`;
+  const costStr = `${colors.green}$${data.totalCost ?? "0.00"}${colors.reset}`;
   return `[${modelName}] ${tokenStr} | ${mcpStr} | ${costStr}`;
-};
-var main = async () => {
+}
+async function main() {
   let sessionContext = {};
   try {
     const stdinData = await new Promise((resolve) => {
@@ -306,11 +320,11 @@ var main = async () => {
     if (stdinData) {
       sessionContext = JSON.parse(stdinData);
     }
-  } catch (e) {
+  } catch {
   }
   const usageData = await fetchUsageData();
   console.log(formatOutput(usageData, sessionContext));
-};
+}
 main().catch((error) => {
   console.error(`${colors.red}Error: ${error.message}${colors.reset}`);
 });
