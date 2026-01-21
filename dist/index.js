@@ -315,7 +315,7 @@ function formatOutput(data, sessionContext) {
   const tokenPercent = data.tokenPercent ?? 0;
   const progressBar = renderProgressBar(tokenPercent);
   const tokenStr = `${progressBar} ${tokenPercent}%${colors.gray}(5h)${colors.reset}`;
-  const mcpStr = `${colors.blue}Tool(1M):${data.mcpPercent ?? 0}%${colors.reset}`;
+  const mcpStr = `${colors.gray}Tool(1M):${data.mcpPercent ?? 0}%${colors.reset}`;
   const costStr = `${colors.green}$${data.totalCost ?? "0.00"}${colors.reset}`;
   return `[${modelName}] ${tokenStr} | ${mcpStr} | ${costStr}`;
 }
