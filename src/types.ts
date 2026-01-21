@@ -118,6 +118,24 @@ export interface ContextWindow {
 }
 
 /**
+ * Workspace information from session context
+ */
+export interface Workspace {
+  current_dir: string;
+  project_dir: string;
+}
+
+/**
+ * Cost information from session context
+ */
+export interface SessionCost {
+  total_cost_usd: number;
+  total_duration_ms: number;
+  total_lines_added: number;
+  total_lines_removed: number;
+}
+
+/**
  * Model information from session context
  */
 export interface SessionModel {
@@ -130,8 +148,9 @@ export interface SessionModel {
 export interface SessionContext {
   model?: SessionModel;
   context_window?: ContextWindow;
-  currentDir?: string; // Current working directory name
-  gitBranch?: string; // Current git branch name
+  workspace?: Workspace;
+  version?: string;
+  cost?: SessionCost;
 }
 
 /**

@@ -344,10 +344,16 @@ function formatDirectoryName(dirPath) {
   const maxLength = 15;
   return dirName.length > maxLength ? dirName.slice(0, maxLength - 2) + "..." : dirName;
 }
-function formatGitBranch(branch) {
-  if (!branch) return "";
-  const cleanBranch = branch.replace(/^refs\/heads\//, "").replace(/^heads\//, "");
-  return cleanBranch;
+function readGitBranch() {
+  try {
+    const headPath = path.join(process.cwd(), ".git", "HEAD");
+    const headContent = fs.readFileSync(headPath, "utf8").trim();
+    if (headContent.startsWith("ref: refs/heads/")) {
+      return headContent.replace("ref: refs/heads/", "");
+    }
+  } catch {
+  }
+  return "";
 }
 function formatOutput(data, sessionContext) {
   if (!data || data.error === "setup_required") {
@@ -367,15 +373,15 @@ function formatOutput(data, sessionContext) {
   const costStr = `$${data.totalCost ?? "0.00"}`;
   const resetStr = data.nextResetTimeStr ? `${colors.gray} | Reset: ${data.nextResetTimeStr}${colors.reset}` : "";
   let dirBranchStr = "";
-  if (sessionContext?.currentDir || sessionContext?.gitBranch) {
+  const currentDirName = sessionContext?.workspace?.current_dir ? formatDirectoryName(sessionContext.workspace.current_dir) : "";
+  const gitBranch = readGitBranch();
+  if (currentDirName || gitBranch) {
     const parts = [];
-    if (sessionContext.currentDir) {
-      const dirName = formatDirectoryName(sessionContext.currentDir);
-      parts.push(`${colors.blue}${dirName}${colors.reset}`);
+    if (currentDirName) {
+      parts.push(`${colors.gray}\u{1F4C1}${currentDirName}${colors.reset}`);
     }
-    if (sessionContext.gitBranch) {
-      const branchName = formatGitBranch(sessionContext.gitBranch);
-      parts.push(`${colors.green}${branchName}${colors.reset}`);
+    if (gitBranch) {
+      parts.push(`${colors.gray}\u{1F33F} ${gitBranch}${colors.reset}`);
     }
     dirBranchStr = `${colors.gray} | ${parts.join(" ")}${colors.reset}`;
   }

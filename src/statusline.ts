@@ -512,6 +512,23 @@ function formatDirectoryName(dirPath: string): string {
 }
 
 /**
+ * Reads current git branch from .git/HEAD file
+ * @returns Git branch name or empty string if not available
+ */
+function readGitBranch(): string {
+  try {
+    const headPath = path.join(process.cwd(), ".git", "HEAD");
+    const headContent = fs.readFileSync(headPath, "utf8").trim();
+    if (headContent.startsWith("ref: refs/heads/")) {
+      return headContent.replace("ref: refs/heads/", "");
+    }
+  } catch {
+    // Not a git repository or HEAD cannot be read
+  }
+  return "";
+}
+
+/**
  * Formats git branch name for display
  * @param branch - Git branch name
  * @returns Formatted branch name
@@ -555,15 +572,18 @@ function formatOutput(data: UsageData, sessionContext: SessionContext): string {
 
   // Add directory and git branch if available
   let dirBranchStr = "";
-  if (sessionContext?.currentDir || sessionContext?.gitBranch) {
+  const currentDirName = sessionContext?.workspace?.current_dir
+    ? formatDirectoryName(sessionContext.workspace.current_dir)
+    : "";
+  const gitBranch = readGitBranch();
+
+  if (currentDirName || gitBranch) {
     const parts: string[] = [];
-    if (sessionContext.currentDir) {
-      const dirName = formatDirectoryName(sessionContext.currentDir);
-      parts.push(`${colors.blue}${dirName}${colors.reset}`);
+    if (currentDirName) {
+      parts.push(`${colors.gray}📁${currentDirName}${colors.reset}`);
     }
-    if (sessionContext.gitBranch) {
-      const branchName = formatGitBranch(sessionContext.gitBranch);
-      parts.push(`${colors.green}${branchName}${colors.reset}`);
+    if (gitBranch) {
+      parts.push(`${colors.gray}🌿 ${gitBranch}${colors.reset}`);
     }
     dirBranchStr = `${colors.gray} | ${parts.join(" ")}${colors.reset}`;
   }
