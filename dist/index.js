@@ -6,6 +6,30 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 var __dirname = path.dirname(fileURLToPath(import.meta.url));
+var getClaudeEnv = (projectDir = process.cwd()) => {
+  const homeDir = process.env.HOME || process.env.USERPROFILE || "";
+  const candidates = [
+    path.join(projectDir, ".claude", "settings.local.json"),
+    // 최우선 (git ignored)
+    path.join(projectDir, ".claude", "settings.json"),
+    // 프로젝트 레벨
+    path.join(homeDir, ".claude", "settings.json")
+    // 전역 설정
+  ];
+  for (const filePath of candidates) {
+    try {
+      if (fs.existsSync(filePath)) {
+        const content = fs.readFileSync(filePath, "utf8");
+        const config = JSON.parse(content);
+        if (config.env && typeof config.env === "object") {
+          return config.env;
+        }
+      }
+    } catch (err) {
+    }
+  }
+  return null;
+};
 var CACHE_FILE = path.join(process.env.HOME || "~", ".claude", "zai-usage-cache.json");
 var CACHE_DURATION = 5e3;
 var REQUEST_TIMEOUT = 2e3;
@@ -18,8 +42,9 @@ var colors = {
   gray: "\x1B[38;5;245m",
   red: "\x1B[38;5;196m"
 };
-var baseUrl = process.env.ANTHROPIC_BASE_URL || "";
-var authToken = process.env.ANTHROPIC_AUTH_TOKEN || "";
+var claudeEnv = getClaudeEnv();
+var baseUrl = process.env.ANTHROPIC_BASE_URL || claudeEnv?.ANTHROPIC_BASE_URL || "";
+var authToken = process.env.ANTHROPIC_AUTH_TOKEN || claudeEnv?.ANTHROPIC_AUTH_TOKEN || "";
 var ANTHROPIC_DEFAULT_OPUS_MODEL = "GLM-4.7";
 var ANTHROPIC_DEFAULT_SONNET_MODEL = "GLM-4.7";
 var ANTHROPIC_DEFAULT_HAIKU_MODEL = "GLM-4.5-Air";

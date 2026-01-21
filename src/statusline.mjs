@@ -15,6 +15,37 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+/**
+ * Reads Claude environment variables from settings files
+ * Priority: .claude/settings.local.json > .claude/settings.json > ~/.claude/settings.json
+ * @param {string} projectDir - Project directory (defaults to current working directory)
+ * @returns {Object|null} Environment variables object or null if not found
+ */
+const getClaudeEnv = (projectDir = process.cwd()) => {
+  const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+  const candidates = [
+    path.join(projectDir, '.claude', 'settings.local.json'),   // 최우선 (git ignored)
+    path.join(projectDir, '.claude', 'settings.json'),          // 프로젝트 레벨
+    path.join(homeDir, '.claude', 'settings.json')              // 전역 설정
+  ];
+
+  for (const filePath of candidates) {
+    try {
+      if (fs.existsSync(filePath)) {
+        const content = fs.readFileSync(filePath, 'utf8');
+        const config = JSON.parse(content);
+        if (config.env && typeof config.env === 'object') {
+          return config.env;
+        }
+      }
+    } catch (err) {
+      // Silent fail - 다음 후보로 계속
+    }
+  }
+
+  return null;
+};
+
 // Configuration
 const CACHE_FILE = path.join(process.env.HOME || '~', '.claude', 'zai-usage-cache.json');
 const CACHE_DURATION = 5000; // 5 seconds
@@ -31,9 +62,10 @@ const colors = {
   red: '\x1b[38;5;196m'
 };
 
-// Read environment variables
-const baseUrl = process.env.ANTHROPIC_BASE_URL || '';
-const authToken = process.env.ANTHROPIC_AUTH_TOKEN || '';
+// Read environment variables with fallback to Claude settings files
+const claudeEnv = getClaudeEnv();
+const baseUrl = process.env.ANTHROPIC_BASE_URL || claudeEnv?.ANTHROPIC_BASE_URL || '';
+const authToken = process.env.ANTHROPIC_AUTH_TOKEN || claudeEnv?.ANTHROPIC_AUTH_TOKEN || '';
 
 const ANTHROPIC_DEFAULT_OPUS_MODEL="GLM-4.7"
 const ANTHROPIC_DEFAULT_SONNET_MODEL="GLM-4.7"
