@@ -1,6 +1,6 @@
 {
   "name": "glm-coding-plan-statusline",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Configure GLM Coding Plan status line for Claude Code",
   "type": "module",
   "author": "jeongsk",
