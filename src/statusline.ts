@@ -109,20 +109,26 @@ let modelUsageUrl: string | null = null;
 let toolUsageUrl: string | null = null;
 let quotaLimitUrl: string | null = null;
 
+const SUPPORTED_DOMAINS = [
+  "api.z.ai",
+  "open.bigmodel.cn",
+  "dev.bigmodel.cn",
+] as const;
+
 if (baseUrl) {
-  if (baseUrl.includes("api.z.ai")) {
+  const isSupported = SUPPORTED_DOMAINS.some((domain) =>
+    baseUrl.includes(domain)
+  );
+
+  if (isSupported) {
     const baseDomain = `${new URL(baseUrl).protocol}//${new URL(baseUrl).host}`;
     modelUsageUrl = `${baseDomain}/api/monitor/usage/model-usage`;
     toolUsageUrl = `${baseDomain}/api/monitor/usage/tool-usage`;
     quotaLimitUrl = `${baseDomain}/api/monitor/usage/quota/limit`;
-  } else if (
-    baseUrl.includes("open.bigmodel.cn") ||
-    baseUrl.includes("dev.bigmodel.cn")
-  ) {
-    const baseDomain = `${new URL(baseUrl).protocol}//${new URL(baseUrl).host}`;
-    modelUsageUrl = `${baseDomain}/api/monitor/usage/model-usage`;
-    toolUsageUrl = `${baseDomain}/api/monitor/usage/tool-usage`;
-    quotaLimitUrl = `${baseDomain}/api/monitor/usage/quota/limit`;
+  } else {
+    console.warn(
+      `GLM Coding Plan Statusline: Unsupported baseUrl. Supported domains: ${SUPPORTED_DOMAINS.join(", ")}`
+    );
   }
 }
 
@@ -226,6 +232,26 @@ function shouldUseCache(): UsageData | null {
 }
 
 /**
+ * Formats next reset time as local time string
+ * @param timestamp - Unix timestamp in milliseconds
+ * @returns Formatted time string (e.g., "01/21 20:16" or "20:16")
+ */
+function formatResetTime(timestamp: number): string {
+  const date = new Date(timestamp);
+  const now = new Date();
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+
+  // If reset is today, show only time; otherwise show date and time
+  if (date.toDateString() === now.toDateString()) {
+    return `${hours}:${minutes}`;
+  }
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${month}/${day} ${hours}:${minutes}`;
+}
+
+/**
  * Fetches quota limit data
  * @returns Quota limit data with token and time percentages
  */
@@ -241,18 +267,27 @@ async function fetchQuota(): Promise<QuotaData> {
       "limits" in result.data &&
       Array.isArray(result.data.limits)
     ) {
-      const limits = result.data.limits as Array<{ type: string; percentage: number }>;
+      const limits = result.data.limits as Array<{
+        type: string;
+        percentage: number;
+        nextResetTime?: number;
+      }>;
       let tokenPercent = 0;
       let mcpPercent = 0;
+      let nextResetTime: number | undefined;
       for (const limit of limits) {
         if (limit.type === "TOKENS_LIMIT") {
           tokenPercent = Math.round(limit.percentage || 0);
+          nextResetTime = limit.nextResetTime;
         }
         if (limit.type === "TIME_LIMIT") {
           mcpPercent = Math.round(limit.percentage || 0);
         }
       }
-      return { tokenPercent, mcpPercent };
+      const nextResetTimeStr = nextResetTime
+        ? formatResetTime(nextResetTime)
+        : undefined;
+      return { tokenPercent, mcpPercent, nextResetTime, nextResetTimeStr };
     }
   } catch {
     // Ignore quota errors
@@ -382,9 +417,13 @@ async function fetchUsageData(): Promise<UsageData> {
     // Extract quota data
     let tokenPercent = 0;
     let finalMcpPercent = 0;
+    let nextResetTime: number | undefined;
+    let nextResetTimeStr: string | undefined;
     if (quotaData.status === "fulfilled") {
       tokenPercent = quotaData.value.tokenPercent;
       finalMcpPercent = quotaData.value.mcpPercent;
+      nextResetTime = quotaData.value.nextResetTime;
+      nextResetTimeStr = quotaData.value.nextResetTimeStr;
     }
 
     // If tool usage returned a value, use it
@@ -406,6 +445,8 @@ async function fetchUsageData(): Promise<UsageData> {
       totalCost,
       modelName,
       timestamp: Date.now(),
+      nextResetTime,
+      nextResetTimeStr,
     };
 
     // Save to cache
@@ -442,6 +483,22 @@ function renderProgressBar(percent: number, width: number = 10): string {
   return `${color}${filled}${colors.gray}${empty} ${percent}%${colors.reset}`;
 }
 
+/**
+ * Calculates context window usage percentage
+ * @param sessionContext - Session context from stdin
+ * @returns Context usage percentage (0-100)
+ */
+function calculateContextUsage(sessionContext: SessionContext): number {
+  const contextWindow = sessionContext?.context_window;
+  if (!contextWindow?.context_window_size || !contextWindow?.total_input_tokens) {
+    return 0;
+  }
+
+  return Math.round(
+    (contextWindow.total_input_tokens * 100) / contextWindow.context_window_size,
+  );
+}
+
 // Format output
 function formatOutput(data: UsageData, sessionContext: SessionContext): string {
   if (!data || data.error === "setup_required") {
@@ -458,15 +515,21 @@ function formatOutput(data: UsageData, sessionContext: SessionContext): string {
     modelName = mapModelName(sessionContext.model.display_name);
   }
 
-  // Format: [Model] Health bar | 5h: XX% | Tool | Cost
-  const healthPercent = data.tokenPercent ?? 0;  // Context health
-  const healthBar = renderProgressBar(healthPercent);
-  const healthStr = `${healthBar}`;
-  const tokenStr = `5h: ${healthPercent}%`;
+  // Calculate context window usage percentage
+  const contextPercent = calculateContextUsage(sessionContext);
+  const contextBar = renderProgressBar(contextPercent);
+
+  // Format: [Model] Context bar | 5h: XX% | Tool | Cost | Reset
+  const tokenStr = `5h: ${data.tokenPercent ?? 0}%`;
   const mcpStr = `Tool: ${data.mcpPercent ?? 0}%`;
   const costStr = `$${data.totalCost ?? "0.00"}`;
 
-  return `[${modelName}] ${healthStr}${colors.gray} | ${tokenStr} | ${mcpStr} | ${costStr}${colors.reset}`;
+  // Add reset time if available
+  const resetStr = data.nextResetTimeStr
+    ? `${colors.gray} | Reset: ${data.nextResetTimeStr}${colors.reset}`
+    : "";
+
+  return `[${modelName}] ${contextBar}${colors.gray} | ${tokenStr} | ${mcpStr} | ${costStr}${resetStr}${colors.reset}`;
 }
 
 // Main execution

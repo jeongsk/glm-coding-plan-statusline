@@ -84,17 +84,24 @@ var authToken = process.env.ANTHROPIC_AUTH_TOKEN || claudeEnv?.ANTHROPIC_AUTH_TO
 var modelUsageUrl = null;
 var toolUsageUrl = null;
 var quotaLimitUrl = null;
+var SUPPORTED_DOMAINS = [
+  "api.z.ai",
+  "open.bigmodel.cn",
+  "dev.bigmodel.cn"
+];
 if (baseUrl) {
-  if (baseUrl.includes("api.z.ai")) {
+  const isSupported = SUPPORTED_DOMAINS.some(
+    (domain) => baseUrl.includes(domain)
+  );
+  if (isSupported) {
     const baseDomain = `${new URL(baseUrl).protocol}//${new URL(baseUrl).host}`;
     modelUsageUrl = `${baseDomain}/api/monitor/usage/model-usage`;
     toolUsageUrl = `${baseDomain}/api/monitor/usage/tool-usage`;
     quotaLimitUrl = `${baseDomain}/api/monitor/usage/quota/limit`;
-  } else if (baseUrl.includes("open.bigmodel.cn") || baseUrl.includes("dev.bigmodel.cn")) {
-    const baseDomain = `${new URL(baseUrl).protocol}//${new URL(baseUrl).host}`;
-    modelUsageUrl = `${baseDomain}/api/monitor/usage/model-usage`;
-    toolUsageUrl = `${baseDomain}/api/monitor/usage/tool-usage`;
-    quotaLimitUrl = `${baseDomain}/api/monitor/usage/quota/limit`;
+  } else {
+    console.warn(
+      `GLM Coding Plan Statusline: Unsupported baseUrl. Supported domains: ${SUPPORTED_DOMAINS.join(", ")}`
+    );
   }
 }
 function loadCache() {
@@ -176,6 +183,18 @@ function shouldUseCache() {
   }
   return null;
 }
+function formatResetTime(timestamp) {
+  const date = new Date(timestamp);
+  const now = /* @__PURE__ */ new Date();
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  if (date.toDateString() === now.toDateString()) {
+    return `${hours}:${minutes}`;
+  }
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${month}/${day} ${hours}:${minutes}`;
+}
 async function fetchQuota() {
   try {
     const result = await httpsGet(quotaLimitUrl, "");
@@ -183,15 +202,18 @@ async function fetchQuota() {
       const limits = result.data.limits;
       let tokenPercent = 0;
       let mcpPercent = 0;
+      let nextResetTime;
       for (const limit of limits) {
         if (limit.type === "TOKENS_LIMIT") {
           tokenPercent = Math.round(limit.percentage || 0);
+          nextResetTime = limit.nextResetTime;
         }
         if (limit.type === "TIME_LIMIT") {
           mcpPercent = Math.round(limit.percentage || 0);
         }
       }
-      return { tokenPercent, mcpPercent };
+      const nextResetTimeStr = nextResetTime ? formatResetTime(nextResetTime) : void 0;
+      return { tokenPercent, mcpPercent, nextResetTime, nextResetTimeStr };
     }
   } catch {
   }
@@ -260,9 +282,13 @@ async function fetchUsageData() {
     ]);
     let tokenPercent = 0;
     let finalMcpPercent = 0;
+    let nextResetTime;
+    let nextResetTimeStr;
     if (quotaData.status === "fulfilled") {
       tokenPercent = quotaData.value.tokenPercent;
       finalMcpPercent = quotaData.value.mcpPercent;
+      nextResetTime = quotaData.value.nextResetTime;
+      nextResetTimeStr = quotaData.value.nextResetTimeStr;
     }
     if (mcpPercent.status === "fulfilled" && mcpPercent.value > 0) {
       finalMcpPercent = mcpPercent.value;
@@ -278,7 +304,9 @@ async function fetchUsageData() {
       mcpPercent: finalMcpPercent,
       totalCost,
       modelName,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      nextResetTime,
+      nextResetTimeStr
     };
     saveCache(result);
     return result;
@@ -301,6 +329,15 @@ function renderProgressBar(percent, width = 10) {
   }
   return `${color}${filled}${colors.gray}${empty} ${percent}%${colors.reset}`;
 }
+function calculateContextUsage(sessionContext) {
+  const contextWindow = sessionContext?.context_window;
+  if (!contextWindow?.context_window_size || !contextWindow?.total_input_tokens) {
+    return 0;
+  }
+  return Math.round(
+    contextWindow.total_input_tokens * 100 / contextWindow.context_window_size
+  );
+}
 function formatOutput(data, sessionContext) {
   if (!data || data.error === "setup_required") {
     return `${colors.yellow}\u26A0\uFE0F Setup required${colors.reset}`;
@@ -312,13 +349,13 @@ function formatOutput(data, sessionContext) {
   if (sessionContext?.model?.display_name) {
     modelName = mapModelName(sessionContext.model.display_name);
   }
-  const healthPercent = data.tokenPercent ?? 0;
-  const healthBar = renderProgressBar(healthPercent);
-  const healthStr = `${healthBar}`;
-  const tokenStr = `5h: ${healthPercent}%`;
+  const contextPercent = calculateContextUsage(sessionContext);
+  const contextBar = renderProgressBar(contextPercent);
+  const tokenStr = `5h: ${data.tokenPercent ?? 0}%`;
   const mcpStr = `Tool: ${data.mcpPercent ?? 0}%`;
   const costStr = `$${data.totalCost ?? "0.00"}`;
-  return `[${modelName}] ${healthStr}${colors.gray} | ${tokenStr} | ${mcpStr} | ${costStr}${colors.reset}`;
+  const resetStr = data.nextResetTimeStr ? `${colors.gray} | Reset: ${data.nextResetTimeStr}${colors.reset}` : "";
+  return `[${modelName}] ${contextBar}${colors.gray} | ${tokenStr} | ${mcpStr} | ${costStr}${resetStr}${colors.reset}`;
 }
 async function main() {
   let sessionContext = {};

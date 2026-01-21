@@ -16,47 +16,105 @@ export interface ClaudeEnv {
 }
 
 /**
+ * Quota limit usage detail item
+ */
+export interface QuotaUsageDetail {
+  modelCode: string;
+  usage: number;
+}
+
+/**
  * Quota limit item from API
  */
 export interface QuotaLimit {
-  type: string;
+  type: string; // "TIME_LIMIT" | "TOKENS_LIMIT"
+  unit: number;
+  number: number;
+  usage: number;
+  currentValue: number;
+  remaining: number;
   percentage: number;
+  usageDetails?: QuotaUsageDetail[];
+  nextResetTime?: number;
 }
 
 /**
  * Quota limit API response
  */
 export interface QuotaLimitResponse {
+  code: number;
+  msg: string;
   data: {
     limits: QuotaLimit[];
   };
+  success: boolean;
 }
 
 /**
- * Model usage item from API
+ * Model usage total summary
  */
-export interface ModelUsageItem {
-  model: string;
-  inputTokens: number;
-  outputTokens: number;
+export interface ModelUsageTotal {
+  totalModelCallCount: number;
+  totalTokensUsage: number;
 }
 
 /**
  * Model usage API response
  */
 export interface ModelUsageResponse {
+  code: number;
+  msg: string;
   data: {
-    list: ModelUsageItem[];
+    x_time: string[]; // Time series labels (e.g., "2026-01-21 12:00")
+    modelCallCount: number[]; // Model call counts per time period
+    tokensUsage: number[]; // Token usage per time period
+    totalUsage: ModelUsageTotal;
   };
+  success: boolean;
+}
+
+/**
+ * Tool usage detail item
+ */
+export interface ToolUsageDetail {
+  modelName: string;
+  totalUsageCount: number;
+}
+
+/**
+ * Tool usage total summary
+ */
+export interface ToolUsageTotal {
+  totalNetworkSearchCount: number;
+  totalWebReadMcpCount: number;
+  totalZreadMcpCount: number;
+  totalSearchMcpCount: number;
+  toolDetails: ToolUsageDetail[];
 }
 
 /**
  * Tool usage API response
  */
 export interface ToolUsageResponse {
+  code: number;
+  msg: string;
   data: {
-    list: unknown[];
+    x_time: string[]; // Time series labels
+    networkSearchCount: (number | null)[]; // Network search counts per time period
+    webReadMcpCount: (number | null)[]; // Web read MCP counts per time period
+    zreadMcpCount: (number | null)[]; // Zread MCP counts per time period
+    totalUsage: ToolUsageTotal;
   };
+  success: boolean;
+}
+
+/**
+ * Context window information
+ */
+export interface ContextWindow {
+  context_window_size: number;
+  total_input_tokens: number;
+  total_output_tokens?: number;
 }
 
 /**
@@ -71,6 +129,7 @@ export interface SessionModel {
  */
 export interface SessionContext {
   model?: SessionModel;
+  context_window?: ContextWindow;
 }
 
 /**
@@ -82,6 +141,8 @@ export interface UsageData {
   totalCost?: string;
   modelName?: string;
   timestamp?: number;
+  nextResetTime?: number; // Token limit reset timestamp (ms)
+  nextResetTimeStr?: string; // Formatted reset time string
   error?: string;
 }
 
@@ -99,6 +160,8 @@ export interface CacheData {
 export interface QuotaData {
   tokenPercent: number;
   mcpPercent: number;
+  nextResetTime?: number; // Token limit reset timestamp (ms)
+  nextResetTimeStr?: string; // Formatted reset time string
 }
 
 /**
