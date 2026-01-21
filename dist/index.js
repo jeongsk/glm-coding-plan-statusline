@@ -7,7 +7,10 @@ import path from "path";
 import { fileURLToPath } from "url";
 var __dirname = path.dirname(fileURLToPath(import.meta.url));
 var getClaudeEnv = (projectDir = process.cwd()) => {
-  const homeDir = process.env.HOME || process.env.USERPROFILE || "";
+  const homeDir = process.env.HOME || process.env.USERPROFILE;
+  if (!homeDir) {
+    return null;
+  }
   const candidates = [
     path.join(projectDir, ".claude", "settings.local.json"),
     // 최우선 (git ignored)
@@ -18,14 +21,27 @@ var getClaudeEnv = (projectDir = process.cwd()) => {
   ];
   for (const filePath of candidates) {
     try {
-      if (fs.existsSync(filePath)) {
-        const content = fs.readFileSync(filePath, "utf8");
-        const config = JSON.parse(content);
-        if (config.env && typeof config.env === "object") {
-          return config.env;
+      const content = fs.readFileSync(filePath, "utf8");
+      const config = JSON.parse(content);
+      if (config.env && typeof config.env === "object") {
+        const env = {};
+        if (typeof config.env.ANTHROPIC_BASE_URL === "string") {
+          env.ANTHROPIC_BASE_URL = config.env.ANTHROPIC_BASE_URL;
+        }
+        if (typeof config.env.ANTHROPIC_AUTH_TOKEN === "string") {
+          env.ANTHROPIC_AUTH_TOKEN = config.env.ANTHROPIC_AUTH_TOKEN;
+        }
+        if (Object.keys(env).length > 0) {
+          return env;
         }
       }
     } catch (err) {
+      try {
+        if (fs.existsSync(filePath)) {
+          console.error(`Warning: Failed to read ${filePath}: ${err.message}`);
+        }
+      } catch {
+      }
     }
   }
   return null;

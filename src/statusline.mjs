@@ -22,7 +22,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
  * @returns {Object|null} Environment variables object or null if not found
  */
 const getClaudeEnv = (projectDir = process.cwd()) => {
-  const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+  const homeDir = process.env.HOME || process.env.USERPROFILE;
+  if (!homeDir) {
+    return null;  // Cannot determine home directory
+  }
+
   const candidates = [
     path.join(projectDir, '.claude', 'settings.local.json'),   // 최우선 (git ignored)
     path.join(projectDir, '.claude', 'settings.json'),          // 프로젝트 레벨
@@ -31,15 +35,30 @@ const getClaudeEnv = (projectDir = process.cwd()) => {
 
   for (const filePath of candidates) {
     try {
-      if (fs.existsSync(filePath)) {
-        const content = fs.readFileSync(filePath, 'utf8');
-        const config = JSON.parse(content);
-        if (config.env && typeof config.env === 'object') {
-          return config.env;
+      const content = fs.readFileSync(filePath, 'utf8');
+      const config = JSON.parse(content);
+      if (config.env && typeof config.env === 'object') {
+        // Validate and extract only string environment variables
+        const env = {};
+        if (typeof config.env.ANTHROPIC_BASE_URL === 'string') {
+          env.ANTHROPIC_BASE_URL = config.env.ANTHROPIC_BASE_URL;
+        }
+        if (typeof config.env.ANTHROPIC_AUTH_TOKEN === 'string') {
+          env.ANTHROPIC_AUTH_TOKEN = config.env.ANTHROPIC_AUTH_TOKEN;
+        }
+        if (Object.keys(env).length > 0) {
+          return env;
         }
       }
     } catch (err) {
-      // Silent fail - 다음 후보로 계속
+      // Log error if file exists but cannot be read/parsed
+      try {
+        if (fs.existsSync(filePath)) {
+          console.error(`Warning: Failed to read ${filePath}: ${err.message}`);
+        }
+      } catch {
+        // Ignore stat errors
+      }
     }
   }
 
@@ -67,9 +86,9 @@ const claudeEnv = getClaudeEnv();
 const baseUrl = process.env.ANTHROPIC_BASE_URL || claudeEnv?.ANTHROPIC_BASE_URL || '';
 const authToken = process.env.ANTHROPIC_AUTH_TOKEN || claudeEnv?.ANTHROPIC_AUTH_TOKEN || '';
 
-const ANTHROPIC_DEFAULT_OPUS_MODEL="GLM-4.7"
-const ANTHROPIC_DEFAULT_SONNET_MODEL="GLM-4.7"
-const ANTHROPIC_DEFAULT_HAIKU_MODEL="GLM-4.5-Air"
+const ANTHROPIC_DEFAULT_OPUS_MODEL = "GLM-4.7";
+const ANTHROPIC_DEFAULT_SONNET_MODEL = "GLM-4.7";
+const ANTHROPIC_DEFAULT_HAIKU_MODEL = "GLM-4.5-Air";
 
 // Determine platform and endpoints
 let platform = null;
