@@ -16,6 +16,17 @@ export interface ClaudeEnv {
 }
 
 /**
+ * API configuration for GLM API client
+ */
+export interface ApiConfig {
+  quotaLimitUrl: string;
+  modelUsageUrl: string;
+  toolUsageUrl: string;
+  authToken: string;
+  timeout?: number;
+}
+
+/**
  * Quota limit usage detail item
  */
 export interface QuotaUsageDetail {
@@ -104,6 +115,47 @@ export interface ToolUsageResponse {
     webReadMcpCount: (number | null)[]; // Web read MCP counts per time period
     zreadMcpCount: (number | null)[]; // Zread MCP counts per time period
     totalUsage: ToolUsageTotal;
+  };
+  success: boolean;
+}
+
+/**
+ * Model usage item from API list
+ */
+export interface ModelUsageItem {
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+/**
+ * Model usage list API response (actual API response format)
+ */
+export interface ModelUsageListResponse {
+  code: number;
+  msg: string;
+  data: {
+    list: ModelUsageItem[];
+  };
+  success: boolean;
+}
+
+/**
+ * Tool usage item from API list
+ */
+export interface ToolUsageItem {
+  toolName: string;
+  usageCount: number;
+}
+
+/**
+ * Tool usage list API response (actual API response format)
+ */
+export interface ToolUsageListResponse {
+  code: number;
+  msg: string;
+  data: {
+    list: ToolUsageItem[];
   };
   success: boolean;
 }

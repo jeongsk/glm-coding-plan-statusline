@@ -8,10 +8,16 @@
  * - One-line output format
  */
 
-import https from "node:https";
 import fs from "node:fs";
 import path from "node:path";
 import { mapModelName } from "./utils/modelMapper.js";
+import {
+  buildApiConfig,
+  formatDateTime,
+  getQuotaLimit,
+  getModelUsage,
+  getToolUsage,
+} from "./api/glmApi.js";
 import type {
   ClaudeEnv,
   CacheData,
@@ -20,6 +26,7 @@ import type {
   QuotaData,
   ModelUsageResult,
   SessionContext,
+  ApiConfig,
 } from "./types.js";
 import { getCurrentDirName } from "./utils/sessionHelpers.js";
 
@@ -85,7 +92,6 @@ const CACHE_FILE = path.join(
   "zai-usage-cache.json",
 );
 const CACHE_DURATION = 5000; // 5 seconds
-const REQUEST_TIMEOUT = 2000; // 2 seconds
 
 // ANSI Color codes
 const colors: Colors = {
@@ -105,33 +111,8 @@ const baseUrl =
 const authToken =
   process.env.ANTHROPIC_AUTH_TOKEN || claudeEnv?.ANTHROPIC_AUTH_TOKEN || "";
 
-// Determine platform and endpoints
-let modelUsageUrl: string | null = null;
-let toolUsageUrl: string | null = null;
-let quotaLimitUrl: string | null = null;
-
-const SUPPORTED_DOMAINS = [
-  "api.z.ai",
-  "open.bigmodel.cn",
-  "dev.bigmodel.cn",
-] as const;
-
-if (baseUrl) {
-  const isSupported = SUPPORTED_DOMAINS.some((domain) =>
-    baseUrl.includes(domain)
-  );
-
-  if (isSupported) {
-    const baseDomain = `${new URL(baseUrl).protocol}//${new URL(baseUrl).host}`;
-    modelUsageUrl = `${baseDomain}/api/monitor/usage/model-usage`;
-    toolUsageUrl = `${baseDomain}/api/monitor/usage/tool-usage`;
-    quotaLimitUrl = `${baseDomain}/api/monitor/usage/quota/limit`;
-  } else {
-    console.warn(
-      `GLM Coding Plan Statusline: Unsupported baseUrl. Supported domains: ${SUPPORTED_DOMAINS.join(", ")}`
-    );
-  }
-}
+// Build API configuration
+const apiConfig: ApiConfig | null = buildApiConfig(baseUrl, authToken);
 
 // Cache management
 function loadCache(): CacheData | null {
@@ -162,62 +143,6 @@ function isCacheValid(cache: CacheData | null): boolean {
   if (!cache) return false;
   if (!cache.timestamp) return false;
   return Date.now() - cache.timestamp < CACHE_DURATION;
-}
-
-// Format dates as yyyy-MM-dd HH:mm:ss
-function formatDateTime(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  const hours = String(date.getHours()).padStart(2, "0");
-  const minutes = String(date.getMinutes()).padStart(2, "0");
-  const seconds = String(date.getSeconds()).padStart(2, "0");
-  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
-}
-
-// HTTPS request with timeout
-function httpsGet(url: string, queryParams: string = ""): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    const parsedUrl = new URL(url);
-    const options = {
-      hostname: parsedUrl.hostname,
-      port: 443,
-      path: parsedUrl.pathname + queryParams,
-      method: "GET",
-      headers: {
-        Authorization: authToken,
-        "Accept-Language": "en-US,en",
-        "Content-Type": "application/json",
-      },
-    };
-
-    const req = https.request(options, (res) => {
-      let data = "";
-      res.on("data", (chunk: Buffer) => {
-        data += chunk;
-      });
-      res.on("end", () => {
-        if (res.statusCode !== 200) {
-          return reject(new Error(`HTTP ${res.statusCode}`));
-        }
-        try {
-          resolve(JSON.parse(data));
-        } catch {
-          reject(new Error("Invalid JSON response"));
-        }
-      });
-    });
-
-    req.on("error", reject);
-
-    // Timeout
-    setTimeout(() => {
-      req.destroy();
-      reject(new Error("Request timeout"));
-    }, REQUEST_TIMEOUT);
-
-    req.end();
-  });
 }
 
 /**
@@ -257,22 +182,14 @@ function formatResetTime(timestamp: number): string {
  * @returns Quota limit data with token and time percentages
  */
 async function fetchQuota(): Promise<QuotaData> {
+  if (!apiConfig) {
+    return { tokenPercent: 0, mcpPercent: 0 };
+  }
+
   try {
-    const result = await httpsGet(quotaLimitUrl!, "");
-    if (
-      result &&
-      typeof result === "object" &&
-      "data" in result &&
-      result.data &&
-      typeof result.data === "object" &&
-      "limits" in result.data &&
-      Array.isArray(result.data.limits)
-    ) {
-      const limits = result.data.limits as Array<{
-        type: string;
-        percentage: number;
-        nextResetTime?: number;
-      }>;
+    const result = await getQuotaLimit(apiConfig);
+    if (result.success && result.data?.limits) {
+      const limits = result.data.limits;
       let tokenPercent = 0;
       let mcpPercent = 0;
       let nextResetTime: number | undefined;
@@ -298,27 +215,22 @@ async function fetchQuota(): Promise<QuotaData> {
 
 /**
  * Fetches model usage data and calculates cost
- * @param queryParams - Query parameters for the API request
+ * @param startTime - Start time in format "yyyy-MM-dd HH:mm:ss"
+ * @param endTime - End time in format "yyyy-MM-dd HH:mm:ss"
  * @returns Model usage data with cost and model name
  */
-async function fetchModelUsage(queryParams: string): Promise<ModelUsageResult> {
+async function fetchModelUsage(
+  startTime: string,
+  endTime: string
+): Promise<ModelUsageResult> {
+  if (!apiConfig) {
+    return { totalCost: "0.00", modelName: "Unknown", hasData: false };
+  }
+
   try {
-    const result = await httpsGet(modelUsageUrl!, queryParams);
-    if (
-      result &&
-      typeof result === "object" &&
-      "data" in result &&
-      result.data &&
-      typeof result.data === "object" &&
-      "list" in result.data &&
-      Array.isArray(result.data.list) &&
-      result.data.list.length > 0
-    ) {
-      const list = result.data.list as Array<{
-        model: string;
-        inputTokens: number;
-        outputTokens: number;
-      }>;
+    const result = await getModelUsage(apiConfig, startTime, endTime);
+    if (result.success && result.data?.list && result.data.list.length > 0) {
+      const list = result.data.list;
 
       // Calculate cost
       const totalInputTokens = list.reduce(
@@ -352,22 +264,21 @@ async function fetchModelUsage(queryParams: string): Promise<ModelUsageResult> {
 
 /**
  * Fetches tool usage data
- * @param queryParams - Query parameters for the API request
+ * @param startTime - Start time in format "yyyy-MM-dd HH:mm:ss"
+ * @param endTime - End time in format "yyyy-MM-dd HH:mm:ss"
  * @returns MCP usage percentage estimate
  */
-async function fetchToolUsage(queryParams: string): Promise<number> {
+async function fetchToolUsage(
+  startTime: string,
+  endTime: string
+): Promise<number> {
+  if (!apiConfig) {
+    return 0;
+  }
+
   try {
-    const result = await httpsGet(toolUsageUrl!, queryParams);
-    if (
-      result &&
-      typeof result === "object" &&
-      "data" in result &&
-      result.data &&
-      typeof result.data === "object" &&
-      "list" in result.data &&
-      Array.isArray(result.data.list) &&
-      result.data.list.length > 0
-    ) {
+    const result = await getToolUsage(apiConfig, startTime, endTime);
+    if (result.success && result.data?.list && result.data.list.length > 0) {
       return Math.min(100, Math.round(result.data.list.length * 5)); // Rough estimate
     }
   } catch {
@@ -389,7 +300,7 @@ async function fetchUsageData(): Promise<UsageData> {
   }
 
   // Check environment
-  if (!authToken || !baseUrl || !modelUsageUrl) {
+  if (!apiConfig) {
     return {
       error: "setup_required",
       modelName: "Opus",
@@ -405,14 +316,13 @@ async function fetchUsageData(): Promise<UsageData> {
 
   const startTime = formatDateTime(fiveHoursAgo);
   const endTime = formatDateTime(now);
-  const queryParams = `?startTime=${encodeURIComponent(startTime)}&endTime=${encodeURIComponent(endTime)}`;
 
   try {
     // Parallel requests using helper functions
     const [quotaData, modelUsageData, mcpPercent] = await Promise.allSettled([
       fetchQuota(),
-      fetchModelUsage(queryParams),
-      fetchToolUsage(queryParams),
+      fetchModelUsage(startTime, endTime),
+      fetchToolUsage(startTime, endTime),
     ]);
 
     // Extract quota data
@@ -501,18 +411,6 @@ function calculateContextUsage(sessionContext: SessionContext): number {
 }
 
 /**
- * Formats directory name for display (truncates if too long)
- * @param dirPath - Full directory path or name
- * @returns Shortened directory name
- */
-function formatDirectoryName(dirPath: string): string {
-  if (!dirPath) return "";
-  const dirName = dirPath.split(path.sep).pop() || dirPath;
-  const maxLength = 15;
-  return dirName.length > maxLength ? dirName.slice(0, maxLength - 2) + "..." : dirName;
-}
-
-/**
  * Reads current git branch from .git/HEAD file
  * @returns Git branch name or empty string if not available
  */
@@ -527,18 +425,6 @@ function readGitBranch(): string {
     // Not a git repository or HEAD cannot be read
   }
   return "";
-}
-
-/**
- * Formats git branch name for display
- * @param branch - Git branch name
- * @returns Formatted branch name
- */
-function formatGitBranch(branch: string): string {
-  if (!branch) return "";
-  // Remove common prefixes like "heads/" or "refs/heads/"
-  const cleanBranch = branch.replace(/^refs\/heads\//, "").replace(/^heads\//, "");
-  return cleanBranch;
 }
 
 // Format output
