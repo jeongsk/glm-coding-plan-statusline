@@ -573,9 +573,10 @@ function formatOutput(data: UsageData, sessionContext: SessionContext): string {
 
   // Add directory and git branch if available
   const currentDirStr = `📁 ${getCurrentDirName(sessionContext)}`
-  const gitBranch = `🌿 git:(${readGitBranch()})`;
+  const gitBranch = readGitBranch();
+  const gitBranchStr = gitBranch ? ` | 🌿 git:(${gitBranch})` : "";
 
-  return `${colors.gray}🤖 ${modelName} | ${contextBar}${colors.gray} | ${tokenStr} | ${mcpStr} | ${costStr}${resetStr}\n${currentDirStr} | ${gitBranch}${colors.reset}`;
+  return `${colors.gray}🤖 ${modelName} | ${contextBar}${colors.gray} | ${tokenStr} | ${mcpStr} | ${costStr}${resetStr}\n${currentDirStr}${gitBranchStr}${colors.reset}`;
 }
 
 // Main execution
