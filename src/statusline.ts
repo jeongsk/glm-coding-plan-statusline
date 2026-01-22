@@ -397,22 +397,28 @@ function renderProgressBar(percent: number, width: number = 10): string {
 
 /**
  * Calculates context window usage percentage
+ * Uses current_usage breakdown if available (matches bash script logic)
  * @param sessionContext - Session context from stdin
  * @returns Context usage percentage (0-100)
  */
 function calculateContextUsage(sessionContext: SessionContext): number {
   const contextWindow = sessionContext?.context_window;
+  const currentUsage = contextWindow?.current_usage;
+
+  // Use current_usage breakdown if available (bash script logic)
   if (
-    !contextWindow?.context_window_size ||
-    !contextWindow?.total_input_tokens
+    contextWindow?.context_window_size &&
+    currentUsage &&
+    contextWindow.context_window_size > 0
   ) {
-    return 0;
+    const currentTokens =
+      currentUsage.input_tokens +
+      currentUsage.cache_creation_input_tokens +
+      currentUsage.cache_read_input_tokens;
+    return Math.round((currentTokens * 100) / contextWindow.context_window_size);
   }
 
-  return Math.round(
-    (contextWindow.total_input_tokens * 100) /
-      contextWindow.context_window_size,
-  );
+  return 0;
 }
 
 /**

@@ -161,12 +161,25 @@ export interface ToolUsageListResponse {
 }
 
 /**
+ * Current usage breakdown from context window
+ */
+export interface CurrentUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_input_tokens: number;
+  cache_read_input_tokens: number;
+}
+
+/**
  * Context window information
  */
 export interface ContextWindow {
   context_window_size: number;
   total_input_tokens: number;
   total_output_tokens?: number;
+  used_percentage?: number;
+  remaining_percentage?: number;
+  current_usage?: CurrentUsage;
 }
 
 /**
@@ -183,6 +196,7 @@ export interface Workspace {
 export interface SessionCost {
   total_cost_usd: number;
   total_duration_ms: number;
+  total_api_duration_ms: number;
   total_lines_added: number;
   total_lines_removed: number;
 }
@@ -191,18 +205,31 @@ export interface SessionCost {
  * Model information from session context
  */
 export interface SessionModel {
+  id: string;
   display_name: string;
+}
+
+/**
+ * Output style information
+ */
+export interface OutputStyle {
+  name: string;
 }
 
 /**
  * Session context from stdin JSON
  */
 export interface SessionContext {
+  hook_event_name?: string;
+  session_id?: string;
+  transcript_path?: string;
+  cwd?: string;
   model?: SessionModel;
-  context_window?: ContextWindow;
   workspace?: Workspace;
   version?: string;
+  output_style?: OutputStyle;
   cost?: SessionCost;
+  context_window?: ContextWindow;
 }
 
 /**

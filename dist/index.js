@@ -382,12 +382,12 @@ function renderProgressBar(percent, width = 10) {
 }
 function calculateContextUsage(sessionContext) {
   const contextWindow = sessionContext?.context_window;
-  if (!contextWindow?.context_window_size || !contextWindow?.total_input_tokens) {
-    return 0;
+  const currentUsage = contextWindow?.current_usage;
+  if (contextWindow?.context_window_size && currentUsage && contextWindow.context_window_size > 0) {
+    const currentTokens = currentUsage.input_tokens + currentUsage.cache_creation_input_tokens + currentUsage.cache_read_input_tokens;
+    return Math.round(currentTokens * 100 / contextWindow.context_window_size);
   }
-  return Math.round(
-    contextWindow.total_input_tokens * 100 / contextWindow.context_window_size
-  );
+  return 0;
 }
 function readGitBranch() {
   try {
