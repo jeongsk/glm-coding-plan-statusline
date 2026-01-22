@@ -28,6 +28,7 @@ import type {
   ModelUsageResult,
   SessionContext,
   ApiConfig,
+  ContextWindow,
 } from "./types.js";
 import { getCurrentDirName } from "./utils/sessionHelpers";
 
@@ -92,7 +93,8 @@ const CACHE_FILE = path.join(
   ".claude",
   "zai-usage-cache.json",
 );
-const CACHE_DURATION = 5000; // 5 seconds
+const CACHE_DURATION = 60000; // 60 seconds (success)
+const CACHE_FAILURE_DURATION = 15000; // 15 seconds (failure)
 
 // ANSI Color codes
 const colors: Colors = {
@@ -143,7 +145,10 @@ function saveCache(data: UsageData): void {
 function isCacheValid(cache: CacheData | null): boolean {
   if (!cache) return false;
   if (!cache.timestamp) return false;
-  return Date.now() - cache.timestamp < CACHE_DURATION;
+  const ttl = cache.data?.apiUnavailable
+    ? CACHE_FAILURE_DURATION
+    : CACHE_DURATION;
+  return Date.now() - cache.timestamp < ttl;
 }
 
 /**
@@ -366,7 +371,7 @@ async function fetchUsageData(): Promise<UsageData> {
 
     return result;
   } catch {
-    return { error: "loading" };
+    return { error: "loading", apiUnavailable: true };
   }
 }
 
@@ -401,24 +406,45 @@ function renderProgressBar(percent: number, width: number = 10): string {
  * @param sessionContext - Session context from stdin
  * @returns Context usage percentage (0-100)
  */
+// Autocompact buffer percentage
+const AUTOCOMPACT_BUFFER_PERCENT = 0.225;
+
+function getNativePercent(context_window: ContextWindow): number | null {
+  const nativePercent = context_window?.used_percentage;
+  if (typeof nativePercent === "number" && !Number.isNaN(nativePercent)) {
+    return Math.min(100, Math.max(0, Math.round(nativePercent)));
+  }
+  return null;
+}
+
+function getTotalTokens(context_window: ContextWindow): number {
+  const usage = context_window?.current_usage;
+  return (
+    (usage?.input_tokens ?? 0) +
+    (usage?.cache_creation_input_tokens ?? 0) +
+    (usage?.cache_read_input_tokens ?? 0)
+  );
+}
+
 function calculateContextUsage(sessionContext: SessionContext): number {
   const contextWindow = sessionContext?.context_window;
-  const currentUsage = contextWindow?.current_usage;
-
-  // Use current_usage breakdown if available (bash script logic)
-  if (
-    contextWindow?.context_window_size &&
-    currentUsage &&
-    contextWindow.context_window_size > 0
-  ) {
-    const currentTokens =
-      currentUsage.input_tokens +
-      currentUsage.cache_creation_input_tokens +
-      currentUsage.cache_read_input_tokens;
-    return Math.round((currentTokens * 100) / contextWindow.context_window_size);
+  if (!contextWindow) {
+    return 0;
   }
 
-  return 0;
+  const native = getNativePercent(contextWindow);
+  if (native !== null) {
+    return native;
+  }
+
+  const size = contextWindow?.context_window_size;
+  if (!size || size <= 0) {
+    return 0;
+  }
+
+  const totalTokens = getTotalTokens(contextWindow);
+  const buffer = size * AUTOCOMPACT_BUFFER_PERCENT;
+  return Math.min(100, Math.round(((totalTokens + buffer) / size) * 100));
 }
 
 /**

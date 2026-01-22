@@ -244,6 +244,7 @@ export interface UsageData {
   nextResetTime?: number; // Token limit reset timestamp (ms)
   nextResetTimeStr?: string; // Formatted reset time string
   error?: string;
+  apiUnavailable?: boolean; // true if API call failed (for cache TTL)
 }
 
 /**
@@ -276,7 +277,14 @@ export interface ModelUsageResult {
 /**
  * ANSI color name
  */
-export type ColorName = "reset" | "orange" | "blue" | "green" | "yellow" | "gray" | "red";
+export type ColorName =
+  | "reset"
+  | "orange"
+  | "blue"
+  | "green"
+  | "yellow"
+  | "gray"
+  | "red";
 
 /**
  * ANSI color codes mapping
