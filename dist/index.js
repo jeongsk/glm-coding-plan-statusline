@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
 // src/statusline.ts
-import https from "node:https";
 import fs from "node:fs";
 import path from "node:path";
+import { buffer } from "node:stream/consumers";
 
 // src/utils/modelMapper.ts
 var ANTHROPIC_DEFAULT_OPUS_MODEL = "GLM-4.7";
@@ -17,6 +17,111 @@ function mapModelName(modelName) {
   if (modelName.includes("Sonnet")) return ANTHROPIC_DEFAULT_SONNET_MODEL;
   if (modelName.includes("Haiku")) return ANTHROPIC_DEFAULT_HAIKU_MODEL;
   return modelName;
+}
+
+// src/api/glmApi.ts
+import https from "node:https";
+var DEFAULT_TIMEOUT = 2e3;
+var SUPPORTED_DOMAINS = [
+  "api.z.ai",
+  "open.bigmodel.cn",
+  "dev.bigmodel.cn"
+];
+function buildApiUrls(baseUrl2) {
+  const isSupported = SUPPORTED_DOMAINS.some(
+    (domain) => baseUrl2.includes(domain)
+  );
+  if (!isSupported) {
+    throw new Error(
+      `Unsupported baseUrl. Supported domains: ${SUPPORTED_DOMAINS.join(", ")}`
+    );
+  }
+  const baseDomain = `${new URL(baseUrl2).protocol}//${new URL(baseUrl2).host}`;
+  return {
+    quotaLimitUrl: `${baseDomain}/api/monitor/usage/quota/limit`,
+    modelUsageUrl: `${baseDomain}/api/monitor/usage/model-usage`,
+    toolUsageUrl: `${baseDomain}/api/monitor/usage/tool-usage`
+  };
+}
+function buildApiConfig(baseUrl2, authToken2, timeout) {
+  if (!baseUrl2 || !authToken2) {
+    return null;
+  }
+  try {
+    const urls = buildApiUrls(baseUrl2);
+    return {
+      ...urls,
+      authToken: authToken2,
+      timeout: timeout ?? DEFAULT_TIMEOUT
+    };
+  } catch {
+    return null;
+  }
+}
+function httpsGet(url, authToken2, queryParams = "", timeout = DEFAULT_TIMEOUT) {
+  return new Promise((resolve, reject) => {
+    const parsedUrl = new URL(url);
+    const options = {
+      hostname: parsedUrl.hostname,
+      port: 443,
+      path: parsedUrl.pathname + queryParams,
+      method: "GET",
+      headers: {
+        Authorization: authToken2,
+        "Accept-Language": "en-US,en",
+        "Content-Type": "application/json"
+      }
+    };
+    const req = https.request(options, (res) => {
+      let data = "";
+      res.on("data", (chunk) => {
+        data += chunk;
+      });
+      res.on("end", () => {
+        if (res.statusCode !== 200) {
+          return reject(new Error(`HTTP ${res.statusCode}`));
+        }
+        try {
+          resolve(JSON.parse(data));
+        } catch {
+          reject(new Error("Invalid JSON response"));
+        }
+      });
+    });
+    req.on("error", reject);
+    const timeoutId = setTimeout(() => {
+      req.destroy();
+      reject(new Error("Request timeout"));
+    }, timeout);
+    req.on("close", () => {
+      clearTimeout(timeoutId);
+    });
+    req.end();
+  });
+}
+function formatDateTime(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const seconds = String(date.getSeconds()).padStart(2, "0");
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+}
+async function getQuotaLimit(config) {
+  return httpsGet(config.quotaLimitUrl, config.authToken, "", config.timeout);
+}
+async function getModelUsage(config, startTime, endTime) {
+  const queryParams = `?startTime=${encodeURIComponent(
+    startTime
+  )}&endTime=${encodeURIComponent(endTime)}`;
+  return httpsGet(config.modelUsageUrl, config.authToken, queryParams, config.timeout);
+}
+async function getToolUsage(config, startTime, endTime) {
+  const queryParams = `?startTime=${encodeURIComponent(
+    startTime
+  )}&endTime=${encodeURIComponent(endTime)}`;
+  return httpsGet(config.toolUsageUrl, config.authToken, queryParams, config.timeout);
 }
 
 // src/utils/sessionHelpers.ts
@@ -76,7 +181,6 @@ var CACHE_FILE = path.join(
   "zai-usage-cache.json"
 );
 var CACHE_DURATION = 5e3;
-var REQUEST_TIMEOUT = 2e3;
 var colors = {
   reset: "\x1B[0m",
   orange: "\x1B[38;5;208m",
@@ -89,29 +193,7 @@ var colors = {
 var claudeEnv = getClaudeEnv();
 var baseUrl = process.env.ANTHROPIC_BASE_URL || claudeEnv?.ANTHROPIC_BASE_URL || "";
 var authToken = process.env.ANTHROPIC_AUTH_TOKEN || claudeEnv?.ANTHROPIC_AUTH_TOKEN || "";
-var modelUsageUrl = null;
-var toolUsageUrl = null;
-var quotaLimitUrl = null;
-var SUPPORTED_DOMAINS = [
-  "api.z.ai",
-  "open.bigmodel.cn",
-  "dev.bigmodel.cn"
-];
-if (baseUrl) {
-  const isSupported = SUPPORTED_DOMAINS.some(
-    (domain) => baseUrl.includes(domain)
-  );
-  if (isSupported) {
-    const baseDomain = `${new URL(baseUrl).protocol}//${new URL(baseUrl).host}`;
-    modelUsageUrl = `${baseDomain}/api/monitor/usage/model-usage`;
-    toolUsageUrl = `${baseDomain}/api/monitor/usage/tool-usage`;
-    quotaLimitUrl = `${baseDomain}/api/monitor/usage/quota/limit`;
-  } else {
-    console.warn(
-      `GLM Coding Plan Statusline: Unsupported baseUrl. Supported domains: ${SUPPORTED_DOMAINS.join(", ")}`
-    );
-  }
-}
+var apiConfig = buildApiConfig(baseUrl, authToken);
 function loadCache() {
   try {
     if (fs.existsSync(CACHE_FILE)) {
@@ -137,53 +219,6 @@ function isCacheValid(cache) {
   if (!cache.timestamp) return false;
   return Date.now() - cache.timestamp < CACHE_DURATION;
 }
-function formatDateTime(date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  const hours = String(date.getHours()).padStart(2, "0");
-  const minutes = String(date.getMinutes()).padStart(2, "0");
-  const seconds = String(date.getSeconds()).padStart(2, "0");
-  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
-}
-function httpsGet(url, queryParams = "") {
-  return new Promise((resolve, reject) => {
-    const parsedUrl = new URL(url);
-    const options = {
-      hostname: parsedUrl.hostname,
-      port: 443,
-      path: parsedUrl.pathname + queryParams,
-      method: "GET",
-      headers: {
-        Authorization: authToken,
-        "Accept-Language": "en-US,en",
-        "Content-Type": "application/json"
-      }
-    };
-    const req = https.request(options, (res) => {
-      let data = "";
-      res.on("data", (chunk) => {
-        data += chunk;
-      });
-      res.on("end", () => {
-        if (res.statusCode !== 200) {
-          return reject(new Error(`HTTP ${res.statusCode}`));
-        }
-        try {
-          resolve(JSON.parse(data));
-        } catch {
-          reject(new Error("Invalid JSON response"));
-        }
-      });
-    });
-    req.on("error", reject);
-    setTimeout(() => {
-      req.destroy();
-      reject(new Error("Request timeout"));
-    }, REQUEST_TIMEOUT);
-    req.end();
-  });
-}
 function shouldUseCache() {
   const cache = loadCache();
   if (cache && isCacheValid(cache)) {
@@ -204,9 +239,12 @@ function formatResetTime(timestamp) {
   return `${month}/${day} ${hours}:${minutes}`;
 }
 async function fetchQuota() {
+  if (!apiConfig) {
+    return { tokenPercent: 0, mcpPercent: 0 };
+  }
   try {
-    const result = await httpsGet(quotaLimitUrl, "");
-    if (result && typeof result === "object" && "data" in result && result.data && typeof result.data === "object" && "limits" in result.data && Array.isArray(result.data.limits)) {
+    const result = await getQuotaLimit(apiConfig);
+    if (result.success && result.data?.limits) {
       const limits = result.data.limits;
       let tokenPercent = 0;
       let mcpPercent = 0;
@@ -227,10 +265,13 @@ async function fetchQuota() {
   }
   return { tokenPercent: 0, mcpPercent: 0 };
 }
-async function fetchModelUsage(queryParams) {
+async function fetchModelUsage(startTime, endTime) {
+  if (!apiConfig) {
+    return { totalCost: "0.00", modelName: "Unknown", hasData: false };
+  }
   try {
-    const result = await httpsGet(modelUsageUrl, queryParams);
-    if (result && typeof result === "object" && "data" in result && result.data && typeof result.data === "object" && "list" in result.data && Array.isArray(result.data.list) && result.data.list.length > 0) {
+    const result = await getModelUsage(apiConfig, startTime, endTime);
+    if (result.success && result.data?.list && result.data.list.length > 0) {
       const list = result.data.list;
       const totalInputTokens = list.reduce(
         (sum, item) => sum + (item.inputTokens || 0),
@@ -253,10 +294,13 @@ async function fetchModelUsage(queryParams) {
   }
   return { totalCost: "0.00", modelName: "Unknown", hasData: false };
 }
-async function fetchToolUsage(queryParams) {
+async function fetchToolUsage(startTime, endTime) {
+  if (!apiConfig) {
+    return 0;
+  }
   try {
-    const result = await httpsGet(toolUsageUrl, queryParams);
-    if (result && typeof result === "object" && "data" in result && result.data && typeof result.data === "object" && "list" in result.data && Array.isArray(result.data.list) && result.data.list.length > 0) {
+    const result = await getToolUsage(apiConfig, startTime, endTime);
+    if (result.success && result.data?.list && result.data.list.length > 0) {
       return Math.min(100, Math.round(result.data.list.length * 5));
     }
   } catch {
@@ -268,7 +312,7 @@ async function fetchUsageData() {
   if (cachedData) {
     return cachedData;
   }
-  if (!authToken || !baseUrl || !modelUsageUrl) {
+  if (!apiConfig) {
     return {
       error: "setup_required",
       modelName: "Opus",
@@ -281,12 +325,11 @@ async function fetchUsageData() {
   const fiveHoursAgo = new Date(now.getTime() - 5 * 60 * 60 * 1e3);
   const startTime = formatDateTime(fiveHoursAgo);
   const endTime = formatDateTime(now);
-  const queryParams = `?startTime=${encodeURIComponent(startTime)}&endTime=${encodeURIComponent(endTime)}`;
   try {
     const [quotaData, modelUsageData, mcpPercent] = await Promise.allSettled([
       fetchQuota(),
-      fetchModelUsage(queryParams),
-      fetchToolUsage(queryParams)
+      fetchModelUsage(startTime, endTime),
+      fetchToolUsage(startTime, endTime)
     ]);
     let tokenPercent = 0;
     let finalMcpPercent = 0;
@@ -375,29 +418,16 @@ function formatOutput(data, sessionContext) {
   const costStr = `$${data.totalCost ?? "0.00"}`;
   const resetStr = data.nextResetTimeStr ? `${colors.gray} | Reset: ${data.nextResetTimeStr}${colors.reset}` : "";
   const currentDirStr = `\u{1F4C1} ${getCurrentDirName(sessionContext)}`;
-  const gitBranch = `\u{1F33F} git:(${readGitBranch()})`;
+  const gitBranch = readGitBranch();
+  const gitBranchStr = gitBranch ? ` | \u{1F33F} git:(${gitBranch})` : "";
   return `${colors.gray}\u{1F916} ${modelName} | ${contextBar}${colors.gray} | ${tokenStr} | ${mcpStr} | ${costStr}${resetStr}
-${currentDirStr} | ${gitBranch}${colors.reset}`;
+${currentDirStr}${gitBranchStr}${colors.reset}`;
 }
 async function main() {
   let sessionContext = {};
-  try {
-    const stdinData = await new Promise((resolve) => {
-      let data = "";
-      process.stdin.on("data", (chunk) => {
-        data += chunk;
-      });
-      process.stdin.on("end", () => {
-        resolve(data);
-      });
-      setTimeout(() => {
-        resolve("");
-      }, 100);
-    });
-    if (stdinData) {
-      sessionContext = JSON.parse(stdinData);
-    }
-  } catch {
+  const stdinData = (await buffer(process.stdin)).toString("utf8");
+  if (stdinData) {
+    sessionContext = JSON.parse(stdinData);
   }
   const usageData = await fetchUsageData();
   console.log(formatOutput(usageData, sessionContext));

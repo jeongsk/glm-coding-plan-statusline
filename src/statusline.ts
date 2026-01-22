@@ -10,7 +10,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { mapModelName } from "./utils/modelMapper.js";
+import { buffer } from "node:stream/consumers";
+import { mapModelName } from "./utils/modelMapper";
 import {
   buildApiConfig,
   formatDateTime,
@@ -28,7 +29,7 @@ import type {
   SessionContext,
   ApiConfig,
 } from "./types.js";
-import { getCurrentDirName } from "./utils/sessionHelpers.js";
+import { getCurrentDirName } from "./utils/sessionHelpers";
 
 /**
  * Reads Claude environment variables from settings files
@@ -221,7 +222,7 @@ async function fetchQuota(): Promise<QuotaData> {
  */
 async function fetchModelUsage(
   startTime: string,
-  endTime: string
+  endTime: string,
 ): Promise<ModelUsageResult> {
   if (!apiConfig) {
     return { totalCost: "0.00", modelName: "Unknown", hasData: false };
@@ -270,7 +271,7 @@ async function fetchModelUsage(
  */
 async function fetchToolUsage(
   startTime: string,
-  endTime: string
+  endTime: string,
 ): Promise<number> {
   if (!apiConfig) {
     return 0;
@@ -401,12 +402,16 @@ function renderProgressBar(percent: number, width: number = 10): string {
  */
 function calculateContextUsage(sessionContext: SessionContext): number {
   const contextWindow = sessionContext?.context_window;
-  if (!contextWindow?.context_window_size || !contextWindow?.total_input_tokens) {
+  if (
+    !contextWindow?.context_window_size ||
+    !contextWindow?.total_input_tokens
+  ) {
     return 0;
   }
 
   return Math.round(
-    (contextWindow.total_input_tokens * 100) / contextWindow.context_window_size,
+    (contextWindow.total_input_tokens * 100) /
+      contextWindow.context_window_size,
   );
 }
 
@@ -458,7 +463,7 @@ function formatOutput(data: UsageData, sessionContext: SessionContext): string {
     : "";
 
   // Add directory and git branch if available
-  const currentDirStr = `📁 ${getCurrentDirName(sessionContext)}`
+  const currentDirStr = `📁 ${getCurrentDirName(sessionContext)}`;
   const gitBranch = readGitBranch();
   const gitBranchStr = gitBranch ? ` | 🌿 git:(${gitBranch})` : "";
 
@@ -469,25 +474,9 @@ function formatOutput(data: UsageData, sessionContext: SessionContext): string {
 async function main(): Promise<void> {
   // Read session context from stdin
   let sessionContext: SessionContext = {};
-  try {
-    const stdinData = await new Promise<string>((resolve) => {
-      let data = "";
-      process.stdin.on("data", (chunk: Buffer) => {
-        data += chunk;
-      });
-      process.stdin.on("end", () => {
-        resolve(data);
-      });
-      // Timeout for stdin
-      setTimeout(() => {
-        resolve("");
-      }, 100);
-    });
-    if (stdinData) {
-      sessionContext = JSON.parse(stdinData) as SessionContext;
-    }
-  } catch {
-    // Ignore parse errors
+  const stdinData = (await buffer(process.stdin)).toString("utf8");
+  if (stdinData) {
+    sessionContext = JSON.parse(stdinData) as SessionContext;
   }
 
   // Fetch usage data
