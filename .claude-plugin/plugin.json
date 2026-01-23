@@ -1,5 +1,5 @@
 {
   "name": "glm-coding-plan-statusline",
   "description": "Configure a custom status line for Claude Code to display contextual information like model name, directory, and git branch at the bottom of the interface.",
-  "version": "1.1.0"
+  "version": "1.2.0"
 }

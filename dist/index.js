@@ -180,7 +180,8 @@ var CACHE_FILE = path.join(
   ".claude",
   "zai-usage-cache.json"
 );
-var CACHE_DURATION = 5e3;
+var CACHE_DURATION = 6e4;
+var CACHE_FAILURE_DURATION = 15e3;
 var colors = {
   reset: "\x1B[0m",
   orange: "\x1B[38;5;208m",
@@ -217,7 +218,8 @@ function saveCache(data) {
 function isCacheValid(cache) {
   if (!cache) return false;
   if (!cache.timestamp) return false;
-  return Date.now() - cache.timestamp < CACHE_DURATION;
+  const ttl = cache.data?.apiUnavailable ? CACHE_FAILURE_DURATION : CACHE_DURATION;
+  return Date.now() - cache.timestamp < ttl;
 }
 function shouldUseCache() {
   const cache = loadCache();
@@ -227,16 +229,20 @@ function shouldUseCache() {
   return null;
 }
 function formatResetTime(timestamp) {
-  const date = new Date(timestamp);
-  const now = /* @__PURE__ */ new Date();
-  const hours = String(date.getHours()).padStart(2, "0");
-  const minutes = String(date.getMinutes()).padStart(2, "0");
-  if (date.toDateString() === now.toDateString()) {
-    return `${hours}:${minutes}`;
+  const now = Date.now();
+  const diff = timestamp - now;
+  if (diff <= 0) {
+    return "0m";
   }
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${month}/${day} ${hours}:${minutes}`;
+  const hours = Math.floor(diff / (1e3 * 60 * 60));
+  const minutes = Math.floor(diff % (1e3 * 60 * 60) / (1e3 * 60));
+  if (hours > 0 && minutes > 0) {
+    return `${hours}h ${minutes}m`;
+  } else if (hours > 0) {
+    return `${hours}h`;
+  } else {
+    return `${minutes}m`;
+  }
 }
 async function fetchQuota() {
   if (!apiConfig) {
@@ -362,32 +368,23 @@ async function fetchUsageData() {
     saveCache(result);
     return result;
   } catch {
-    return { error: "loading" };
+    return { error: "loading", apiUnavailable: true };
   }
 }
-function renderProgressBar(percent, width = 10) {
+function renderProgressBar(percent = 0, width = 10) {
   const filledWidth = Math.round(percent / 100 * width);
   const emptyWidth = width - filledWidth;
   const filled = "\u2588".repeat(filledWidth);
   const empty = "\u2591".repeat(emptyWidth);
   let color;
-  if (percent >= 85) {
+  if (percent >= 90) {
     color = colors.red;
-  } else if (percent >= 60) {
+  } else if (percent >= 70) {
     color = colors.yellow;
   } else {
     color = colors.green;
   }
-  return `${color}${filled}${colors.gray}${empty} ${percent}%${colors.reset}`;
-}
-function calculateContextUsage(sessionContext) {
-  const contextWindow = sessionContext?.context_window;
-  const currentUsage = contextWindow?.current_usage;
-  if (contextWindow?.context_window_size && currentUsage && contextWindow.context_window_size > 0) {
-    const currentTokens = currentUsage.input_tokens + currentUsage.cache_creation_input_tokens + currentUsage.cache_read_input_tokens;
-    return Math.round(currentTokens * 100 / contextWindow.context_window_size);
-  }
-  return 0;
+  return `${color}${filled}${colors.gray}${empty} ${percent}%`;
 }
 function readGitBranch() {
   try {
@@ -411,16 +408,12 @@ function formatOutput(data, sessionContext) {
   if (sessionContext?.model?.display_name) {
     modelName = mapModelName(sessionContext.model.display_name);
   }
-  const contextPercent = calculateContextUsage(sessionContext);
-  const contextBar = renderProgressBar(contextPercent);
-  const tokenStr = `5h: ${data.tokenPercent ?? 0}%`;
-  const mcpStr = `Tool: ${data.mcpPercent ?? 0}%`;
-  const costStr = `$${data.totalCost ?? "0.00"}`;
-  const resetStr = data.nextResetTimeStr ? `${colors.gray} | Reset: ${data.nextResetTimeStr}${colors.reset}` : "";
+  const tokenStr = `Tokens: ${renderProgressBar(data.tokenPercent)} (Resets in ${data.nextResetTimeStr})`;
+  const mcpStr = `MCP: ${data.mcpPercent}%`;
   const currentDirStr = `\u{1F4C1} ${getCurrentDirName(sessionContext)}`;
   const gitBranch = readGitBranch();
-  const gitBranchStr = gitBranch ? ` | \u{1F33F} git:(${gitBranch})` : "";
-  return `${colors.gray}\u{1F916} ${modelName} | ${contextBar}${colors.gray} | ${tokenStr} | ${mcpStr} | ${costStr}${resetStr}
+  const gitBranchStr = gitBranch ? ` | git:(${gitBranch})` : "";
+  return `${colors.gray}\u{1F916} ${modelName} | ${tokenStr} | ${mcpStr}
 ${currentDirStr}${gitBranchStr}${colors.reset}`;
 }
 async function main() {
