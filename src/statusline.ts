@@ -164,23 +164,28 @@ function shouldUseCache(): UsageData | null {
 }
 
 /**
- * Formats next reset time as local time string
+ * Formats next reset time as relative time string
  * @param timestamp - Unix timestamp in milliseconds
- * @returns Formatted time string (e.g., "01/21 20:16" or "20:16")
+ * @returns Formatted time string (e.g., "4h30m")
  */
 function formatResetTime(timestamp: number): string {
-  const date = new Date(timestamp);
-  const now = new Date();
-  const hours = String(date.getHours()).padStart(2, "0");
-  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const now = Date.now();
+  const diff = timestamp - now;
 
-  // If reset is today, show only time; otherwise show date and time
-  if (date.toDateString() === now.toDateString()) {
-    return `${hours}:${minutes}`;
+  if (diff <= 0) {
+    return "0m";
   }
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${month}/${day} ${hours}:${minutes}`;
+
+  const hours = Math.floor(diff / (1000 * 60 * 60));
+  const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+
+  if (hours > 0 && minutes > 0) {
+    return `${hours}h ${minutes}m`;
+  } else if (hours > 0) {
+    return `${hours}h`;
+  } else {
+    return `${minutes}m`;
+  }
 }
 
 /**
@@ -381,7 +386,7 @@ async function fetchUsageData(): Promise<UsageData> {
  * @param width - Width of the progress bar in characters
  * @returns Colored progress bar string
  */
-function renderProgressBar(percent: number, width: number = 10): string {
+function renderProgressBar(percent: number = 0, width: number = 10): string {
   const filledWidth = Math.round((percent / 100) * width);
   const emptyWidth = width - filledWidth;
   const filled = "█".repeat(filledWidth);
@@ -389,15 +394,15 @@ function renderProgressBar(percent: number, width: number = 10): string {
 
   // Color based on percentage
   let color: string;
-  if (percent >= 85) {
+  if (percent >= 90) {
     color = colors.red;
-  } else if (percent >= 60) {
+  } else if (percent >= 70) {
     color = colors.yellow;
   } else {
     color = colors.green;
   }
 
-  return `${color}${filled}${colors.gray}${empty} ${percent}%${colors.reset}`;
+  return `${color}${filled}${colors.gray}${empty} ${percent}%`;
 }
 
 /**
@@ -411,36 +416,32 @@ const AUTOCOMPACT_BUFFER_PERCENT = 0.225;
 
 function getNativePercent(context_window: ContextWindow): number | null {
   const nativePercent = context_window?.used_percentage;
-  if (typeof nativePercent === "number" && !Number.isNaN(nativePercent)) {
+  if (
+    typeof nativePercent === "number" &&
+    !Number.isNaN(nativePercent) &&
+    nativePercent > 0
+  ) {
     return Math.min(100, Math.max(0, Math.round(nativePercent)));
   }
   return null;
 }
 
 function getTotalTokens(context_window: ContextWindow): number {
-  const usage = context_window?.current_usage;
   return (
-    (usage?.input_tokens ?? 0) +
-    (usage?.cache_creation_input_tokens ?? 0) +
-    (usage?.cache_read_input_tokens ?? 0)
+    (context_window?.total_input_tokens ?? 0) +
+    (context_window?.total_output_tokens ?? 0)
   );
 }
 
 function calculateContextUsage(sessionContext: SessionContext): number {
   const contextWindow = sessionContext?.context_window;
-  if (!contextWindow) {
-    return 0;
-  }
+  if (!contextWindow) return 0;
 
   const native = getNativePercent(contextWindow);
-  if (native !== null) {
-    return native;
-  }
+  if (native != null) return native;
 
   const size = contextWindow?.context_window_size;
-  if (!size || size <= 0) {
-    return 0;
-  }
+  if (!size || size <= 0) return 0;
 
   const totalTokens = getTotalTokens(contextWindow);
   const buffer = size * AUTOCOMPACT_BUFFER_PERCENT;
@@ -480,26 +481,15 @@ function formatOutput(data: UsageData, sessionContext: SessionContext): string {
     modelName = mapModelName(sessionContext.model.display_name);
   }
 
-  // Calculate context window usage percentage
-  const contextPercent = calculateContextUsage(sessionContext);
-  const contextBar = renderProgressBar(contextPercent);
-
-  // Format: [Model] Context bar | 5h: XX% | Tool | Cost | Reset | Dir | Branch
-  const tokenStr = `5h: ${data.tokenPercent ?? 0}%`;
-  const mcpStr = `Tool: ${data.mcpPercent ?? 0}%`;
-  const costStr = `$${data.totalCost ?? "0.00"}`;
-
-  // Add reset time if available
-  const resetStr = data.nextResetTimeStr
-    ? `${colors.gray} | Reset: ${data.nextResetTimeStr}${colors.reset}`
-    : "";
+  const tokenStr = `Tokens: ${renderProgressBar(data.tokenPercent)} (Resets in ${data.nextResetTimeStr})`;
+  const mcpStr = `MCP: ${data.mcpPercent}%`;
 
   // Add directory and git branch if available
   const currentDirStr = `📁 ${getCurrentDirName(sessionContext)}`;
   const gitBranch = readGitBranch();
-  const gitBranchStr = gitBranch ? ` | 🌿 git:(${gitBranch})` : "";
+  const gitBranchStr = gitBranch ? ` | git:(${gitBranch})` : "";
 
-  return `${colors.gray}🤖 ${modelName} | ${contextBar}${colors.gray} | ${tokenStr} | ${mcpStr} | ${costStr}${resetStr}\n${currentDirStr}${gitBranchStr}${colors.reset}`;
+  return `${colors.gray}🤖 ${modelName} | ${tokenStr} | ${mcpStr}\n${currentDirStr}${gitBranchStr}${colors.reset}`;
 }
 
 // Main execution
